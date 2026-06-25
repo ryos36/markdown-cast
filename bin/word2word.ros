@@ -1,0 +1,166 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+word2word.ros -- ((単語 . 品詞) ...) の中で、mecab が分割してしまった複合語を
+1 セルに畳み直す((単語 . 品詞) ...) -> ((単語 . 品詞) ...))。
+
+辞書は「語のリスト」 (("micro:bit") ("M5StickC Plus2") ...)。
+畳み込みは特殊変数 cl-user::*mecab-private-dictionary* に束縛された辞書を参照する。
+  - mapcar 経由(filter モード): mapcar が --dic で辞書を読み、この変数に束縛してから
+    --info の lambda を適用する(この lambda は変数を参照するだけ＝テキスト固定)。
+  - 単体実行: 下の --dic FILE で自分で読み、同じ変数に束縛して処理する。
+
+照合方法(mecab 不要):
+  mecab は半角空白を捨てるので「連続する表層の連結 = 空白を除いた語」になる。
+  例 "micro" ":" "bit" -> 連結 "micro:bit" = 語"micro:bit"(空白なし)。
+     "M" "5" "StickC" "Plus" "2" -> 連結 "M5StickCPlus2" = 語"M5StickC Plus2"の空白除去。
+  各語の空白除去形を長い順(最長一致)に総当りし、一致したトークン列を (元の語 . "単語") に畳む。
+
+使い方:
+    word2word.ros [IN] [OUT]        # 省略時 stdin/stdout、第2位置引数が出力。辞書未束縛なら素通り
+    word2word.ros --dic FILE [IN]   # FILE( (("micro:bit") ...) )を読んで畳む(単体実行用)
+    word2word.ros [IN] -o OUT       # --output OUT も可
+    word2word.ros --info            # 変換 lambda のテキストを出力して終了(mapcar の filter 用)
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.word2word
+  (:use :cl))
+(in-package :ros.script.word2word)
+
+;; mapcar(--dic)/単体実行(--dic)が辞書を束縛する共有変数。完全修飾(cl-user::)で統一し、
+;; --info の lambda が mapcar 側の束縛を確実に参照できるようにする。
+(defvar cl-user::*mecab-private-dictionary* nil
+  "複合語辞書 ((\"micro:bit\") ...) を束縛する特殊変数。nil なら畳まない。")
+
+;; 変換ロジックの唯一の定義(引数 1 個の lambda フォーム)。辞書は cl-user::*mecab-private-dictionary*
+;; を参照する(焼き込まない＝テキスト固定＝whitelist ハッシュ安定)。
+;; --info でこのフォームを印字し、mapcar.ros が read & eval して各要素に適用する。
+(defparameter *word2word*
+  '(lambda (x)
+     ;; x = ((表層 . 品詞) ...)。辞書が束縛されていれば複合語を 1 セルに畳む。
+     (let ((dic cl-user::*mecab-private-dictionary*))
+       (if (null dic)
+           x
+           ;; 各語 -> (元の語 . 空白除去形)。最長一致のため空白除去形の長い順に並べる。
+           (let* ((terms (sort (loop for e in dic
+                                     for w = (if (consp e) (car e) e)
+                                     collect (cons w (remove #\Space w)))
+                               #'> :key (lambda (p) (length (cdr p)))))
+                  (vec (coerce x 'vector))
+                  (n   (length vec))
+                  (out '())
+                  (i   0))
+             (loop while (< i n) do
+               (let ((hit nil))
+                 (dolist (term terms)
+                   (let ((target (cdr term)))
+                     (when (plusp (length target))
+                       ;; i から表層を連結し、長さが target に届くまで集める。
+                       (let ((acc "") (j i))
+                         (loop while (and (< j n) (< (length acc) (length target)))
+                               do (setf acc (concatenate 'string acc (car (aref vec j))))
+                                  (incf j))
+                         (when (string= acc target)
+                           (push (cons (car term) "単語") out)
+                           (setf i j hit t)
+                           (return))))))
+                 (unless hit
+                   (push (aref vec i) out)
+                   (incf i))))
+             (nreverse out))))))
+
+;; *word2word* から作った変換関数(単体実行用)。
+(defparameter *word2word-fn* (coerce *word2word* 'function))
+
+(defun print-info (out)
+  "変換 lambda のテキストを 1 個出力する(filter --info 用)。"
+  (let ((*package* (find-package :ros.script.word2word))
+        (*print-pretty* nil)
+        (*print-case* :downcase))
+    (prin1 *word2word* out)
+    (terpri out)))
+
+(defun process (in out)
+  "IN から ((単語 . 品詞) ...) を 1 つずつ読み、畳んだ結果を OUT に書く。
+   辞書は cl-user::*mecab-private-dictionary* を参照する(呼び出し側で束縛)。"
+  (let ((*print-pretty* nil))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (prin1 (funcall *word2word-fn* form) out)
+             (terpri out))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-info*
+  (adopt:make-option 'info
+                     :long "info"
+                     :help "変換 lambda のテキストを出力して終了(mapcar の filter 用)"
+                     :reduce (constantly t)))
+
+(defparameter *o-dic*
+  (adopt:make-option 'dic
+                     :long "dic"
+                     :parameter "FILE"
+                     :help "複合語辞書 ((\"micro:bit\") ...) を読み、*mecab-private-dictionary* に束縛して畳む(単体実行用)"
+                     :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "word2word"
+   :summary "((単語 . 品詞) ...) の複合語を辞書で 1 セルに畳む"
+   :usage "[OPTIONS] [IN] [OUT]"
+   :help "mecab が分割した複合語を辞書(語リスト)で畳み直す。辞書は *mecab-private-dictionary* を参照。"
+   :contents (list *o-help* *o-output* *o-info* *o-dic*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (when (gethash 'info opts)
+      (print-info *standard-output*)
+      (uiop:quit 0))
+    (let ((input    (first args))
+          (output   (or (gethash 'output opts) (second args)))
+          (dic-file (gethash 'dic opts)))
+      ;; --dic があれば辞書を *read-eval* nil で読み、共有変数に束縛して処理する。
+      (let ((cl-user::*mecab-private-dictionary*
+              (if dic-file
+                  (with-open-file (in dic-file :external-format :utf-8)
+                    (let ((*read-eval* nil)) (read in)))
+                  cl-user::*mecab-private-dictionary*)))
+        (flet ((run (out)
+                 (if input
+                     (with-open-file (in input :external-format :utf-8)
+                       (process in out))
+                     (process *standard-input* out))))
+          ;; head 等が先にパイプを閉じたら SIGPIPE(broken pipe)が来る。静かに終了する。
+          (handler-case
+              (if output
+                  (with-open-file (out output :direction :output
+                                              :if-exists :supersede
+                                              :if-does-not-exist :create
+                                              :external-format :utf-8)
+                    (run out))
+                  (run *standard-output*))
+            (sb-int:broken-pipe ()
+              (sb-ext:exit :code 0 :abort t))))))))

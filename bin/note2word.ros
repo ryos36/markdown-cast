@@ -1,0 +1,116 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+note2word.ros -- プレーンテキストを mecab で形態素解析し、各行を
+((単語 . 品詞) ...) の S 式 1 つに変換する(入力 1 行 = 1 文、空行はスキップ)。
+
+変換ロジックは引数 1 個の lambda として *note2word* に定義してあり、--info で
+そのテキストを出力する(mapcar.ros の filter モードが read & eval して各要素に適用)。
+
+使い方:
+    note2word.ros [IN] [OUT]        # 省略時 stdin/stdout、第2位置引数が出力
+    note2word.ros [IN] -o OUT       # --output OUT も可
+    note2word.ros --info            # 変換 lambda のテキストを出力して終了
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.note2word
+  (:use :cl))
+(in-package :ros.script.note2word)
+
+;; 変換ロジックの唯一の定義(引数 1 個の lambda フォーム)。
+;; 1 行(文字列) -> ((単語 . 品詞) ...)。mecab を呼ぶので uiop を使う。
+;; 文字列中の \\t \\n は mecab 側で解釈される(Lisp 文字列では「\ + t/n」の 2 文字)。
+;; --info でこのフォームを印字し、mapcar.ros が read & eval して各要素に適用する。
+(defparameter *note2word*
+  '(lambda (line)
+     (let ((raw (uiop:run-program (list "mecab" "-F" "%m\\t%f[0]\\n" "-E" "")
+                                  :input (make-string-input-stream line)
+                                  :output :string
+                                  :external-format :utf-8)))
+       (loop for ln in (uiop:split-string raw :separator '(#\Newline))
+             for tab = (position #\Tab ln)
+             when tab
+               collect (cons (subseq ln 0 tab) (subseq ln (1+ tab)))))))
+
+;; *note2word* から作った変換関数(通常処理用)。
+(defparameter *note2word-fn* (coerce *note2word* 'function))
+
+(defun print-info (out)
+  "変換 lambda のテキストを 1 個出力する(filter --info 用)。"
+  (let ((*package* (find-package :ros.script.note2word))
+        (*print-pretty* nil)
+        (*print-case* :downcase))
+    (prin1 *note2word* out)
+    (terpri out)))
+
+(defun process (in out)
+  "プレーンテキスト IN を 1 行ずつ読み、((単語 . 品詞) ...) を OUT に書く。"
+  (let ((*print-pretty* nil))
+    (loop for line = (read-line in nil :eof)
+          until (eq line :eof)
+          for trimmed = (string-right-trim '(#\Return) line)
+          unless (string= "" (string-trim '(#\Space #\Tab #\Return) trimmed))
+            do (prin1 (funcall *note2word-fn* trimmed) out)
+               (terpri out))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-info*
+  (adopt:make-option 'info
+                     :long "info"
+                     :help "変換 lambda のテキストを出力して終了(mapcar の filter 用)"
+                     :reduce (constantly t)))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "note2word"
+   :summary "テキスト 1 行を mecab で ((単語 . 品詞) ...) にする"
+   :usage "[OPTIONS] [IN] [OUT]"
+   :help "各行を mecab で形態素解析し ((単語 . 品詞) ...) を 1 行ずつ出力する。"
+   :contents (list *o-help* *o-output* *o-info*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (when (gethash 'info opts)
+      (print-info *standard-output*)
+      (uiop:quit 0))
+    (let ((input  (first args))
+          (output (or (gethash 'output opts) (second args))))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out))
+                   (process *standard-input* out))))
+        ;; head 等が先にパイプを閉じたら SIGPIPE(broken pipe)が来る。静かに終了する。
+        (handler-case
+            (if output
+                (with-open-file (out output :direction :output
+                                            :if-exists :supersede
+                                            :if-does-not-exist :create
+                                            :external-format :utf-8)
+                  (run out))
+                (run *standard-output*))
+          (sb-int:broken-pipe ()
+            (sb-ext:exit :code 0 :abort t)))))))

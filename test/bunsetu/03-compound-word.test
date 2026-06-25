@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/mapcar.ros --no-white-list --dic %S/dict/test.dict.ss -i %S/fixtures/03-compound-word.ss %S/../../bin/note2word.ros %S/../../bin/word2word.ros %S/../../bin/word2bunsetu.ros > %t
+# RUN: diff %S/expected/03-compound-word.ss %t

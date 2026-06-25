@@ -1,0 +1,299 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+mapcar.ros -- S 式フォームの全要素に変換 f を mapcar する汎用ツール。
+
+    ("abc" "def")  --f-->  (f(abc) f(def))
+
+変換 f の与え方は 2 モードある:
+
+  [filter モード] (--exec なし。位置引数 = filter)
+    位置引数を filter(実行ファイル)とみなす。`filter --info` を 1 回ずつ呼んで
+    「引数 1 個の lambda のテキスト」を受け取り、read & eval して関数を得る。
+    複数なら filter0 から filterN へ合成(fN(...(f1(f0 e))))し、各要素に適用する。
+    全部 mapcar 自身のプロセス内で動く(サブプロセスは --info 取得だけ)。
+      例: mapcar note2word word2bunsetu  # 各要素を 形態素化 -> 文節化
+
+    [安全装置] eval する前に `--info` 文字列の sha256 を内部ホワイトリスト
+    (+ --white-list FILE)と照合し、無ければ拒否してエラー終了する。
+    --no-white-list で照合を無効化できる。
+
+  [exec モード] (--exec 'CMD' あり)
+    「N 行入力 -> N フォーム出力」の行指向フィルタ。各フォームの全要素の中身
+    テキストを 1 行ずつ CMD の stdin に流し、stdout を 1 フォームずつ読んで元の
+    位置に戻す。CMD は 1 回だけ起動(バッチ)。eval しないのでホワイトリスト対象外。
+
+使い方:
+    mapcar.ros FILTER0 [FILTER1 ...]         # filter モード
+    mapcar.ros --exec 'CMD ...' [IN] [OUT]   # exec モード
+      --exec CMD          exec モードの外部コマンド(指定すると exec モード)
+      -i/--input IN       入力ファイル。未指定 or "-" で stdin。
+      -o/--output OUT     出力ファイル。未指定 or "-" で stdout。
+      --dic FILE          複合語辞書(語リスト)を *read-eval* nil で読み、内容を whitelist
+                          照合してから cl-user::*mecab-private-dictionary* に束縛して filter を
+                          適用する(word2word が参照。filter モードのみ)。
+      --white-list FILE   許可ハッシュを追加(1 行 1 つ、# コメント可)。
+      --no-white-list     ホワイトリスト照合を無効化(filter モード)。
+      -h/--help           ヘルプを表示。
+      exec モードでは位置引数 [IN] [OUT] も可(--input/--output が優先)。
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.mapcar
+  (:use :cl))
+(in-package :ros.script.mapcar)
+
+;; --dic で読んだ複合語辞書を束縛する共有変数(word2word の --info lambda が参照する)。
+;; 完全修飾(cl-user::)で word2word 側と統一する。
+(defvar cl-user::*mecab-private-dictionary* nil)
+
+(defun errexit (msg)
+  (format *error-output* "mapcar: ~a~%" msg)
+  (uiop:quit 1))
+
+(defun element-text (e)
+  "要素を exec に渡すテキストにする(文字列はそのまま、他は再読込可能な prin1 表現)。"
+  (if (stringp e)
+      e
+      (let ((*print-pretty* nil)
+            (*print-case* :downcase))
+        (prin1-to-string e))))
+
+(defun run-exec (cmd texts)
+  "TEXTS を 1 行ずつ CMD の stdin に流し、stdout を S 式フォームのリストにして返す。"
+  (if (null texts)
+      '()
+      (let* ((input (with-output-to-string (s)
+                      (dolist (tx texts) (write-line tx s))))
+             (out (handler-case
+                      (uiop:run-program cmd
+                                        :input (make-string-input-stream input)
+                                        :output :string
+                                        :external-format :utf-8)
+                    (error (e)
+                      (errexit (format nil "exec コマンドを実行できません: ~a~%  cmd: ~a" e cmd))))))
+        (with-input-from-string (s out)
+          (loop for f = (read s nil :eof)
+                until (eq f :eof)
+                collect f)))))
+
+(defun process-exec (in out cmd)
+  "[exec モード] IN のフォームを読み、各フォームの全要素に CMD をバッチで
+   mapcar して OUT に書く。"
+  (let ((forms (loop for f = (read in nil :eof)
+                     until (eq f :eof)
+                     collect f))
+        (texts '())
+        (counts '()))
+    ;; 全フォームの全要素を集める。
+    (dolist (form forms)
+      (dolist (e form) (push (element-text e) texts))
+      (push (length form) counts))
+    (setf texts (nreverse texts)
+          counts (nreverse counts))
+    ;; exec を 1 回だけ起動。
+    (let ((results (run-exec cmd texts)))
+      (when (/= (length results) (length texts))
+        (errexit (format nil "exec の出力フォーム数(~d)が入力要素数(~d)と一致しません"
+                         (length results) (length texts))))
+      ;; 元のフォームごとに区切って 1 フォーム 1 行で出力。
+      (let ((*print-pretty* nil)
+            (*print-case* :downcase))
+        (dolist (count counts)
+          (prin1 (subseq results 0 count) out)
+          (setf results (nthcdr count results))
+          (terpri out))))))
+
+;; --- filter モード(--info の lambda を eval) ---
+
+;; 内部ホワイトリスト: 信頼する filter の `--info` 文字列の sha256(末尾改行トリム後)。
+(defparameter *whitelist*
+  '("b81bd2c00cea095c78b4df50d6f5e5b17d52bab1c7d4ee23bd8a2141ee928387"  ; note2word.ros
+    "031f12adca64ee8f85cf2c803d4c0fcec612b27ef0c7bb3acec31a249251e2eb"  ; word2bunsetu.ros
+    "da1dc50f4b8d2a88f60186ea63dbd0fb08e8cac8906079e8b5d105e6da102d56"  ; bunsetu2caption.ros (N=10)
+    "62d6bda8531af83466454308b513e4686e7b7a094027e8c5068f11a60b51631e"  ; word2word.ros (--info)
+    "747016270249b719acfb1b0ec5cf83e2d2ee3ceab1deb15813d5bd0f9f47b350") ; mecab-private.dict.ss (内容)
+  "信頼する --info 文字列 / 辞書内容の sha256 一覧。")
+
+(defun sha256-hex (string)
+  "STRING の sha256 を sha256sum で計算して 16 進文字列を返す(末尾改行はトリム)。"
+  (let* ((s (string-right-trim '(#\Newline) string))
+         (out (uiop:run-program (list "sha256sum")
+                                :input (make-string-input-stream s)
+                                :output :string
+                                :external-format :utf-8)))
+    (subseq out 0 (position #\Space out))))
+
+(defun load-allowed (file)
+  "内部ホワイトリストと FILE(あれば)のハッシュを合わせたリストを返す。
+   FILE は 1 行 1 ハッシュ、# 以降と空行は無視。"
+  (let ((set (copy-list *whitelist*)))
+    (when file
+      (with-open-file (s file :external-format :utf-8)
+        (loop for line = (read-line s nil :eof)
+              until (eq line :eof)
+              for body = (subseq line 0 (or (position #\# line) (length line)))
+              for h = (string-trim '(#\Space #\Tab #\Return) body)
+              unless (string= "" h)
+                do (push h set))))
+    set))
+
+(defun load-dic-checked (file check allowed)
+  "FILE の中身を読み、内容の sha256 を ALLOWED と照合(CHECK 時)してから、
+   *read-eval* nil で「データとして」read した辞書を返す(コードは実行しない)。"
+  (let ((text (uiop:read-file-string file)))
+    (when check
+      (let ((h (sha256-hex text)))
+        (unless (member h allowed :test #'string-equal)
+          (errexit (format nil "辞書 ~a は whitelist にありません。~%  sha256: ~a~%  許可するなら mapcar の *whitelist* か --white-list に追加するか、--no-white-list で無効化してください。"
+                           file h)))))
+    (let ((*read-eval* nil))
+      (with-input-from-string (s text) (read s)))))
+
+(defun filter-function (filter check allowed)
+  "`FILTER --info` を呼び、lambda テキストを read & eval して関数を返す。
+   CHECK が真なら eval 前に sha256 を ALLOWED と照合し、無ければ拒否する。"
+  (let ((text (handler-case
+                  (uiop:run-program (list filter "--info")
+                                    :output :string
+                                    :external-format :utf-8)
+                (error (e)
+                  (errexit (format nil "filter \"~a\" を実行できません: ~a~%  (スラッシュ無しの名前は PATH を検索します。ローカルのファイルなら ./~a のように指定してください)"
+                                   filter e filter))))))
+    (when check
+      (let ((h (sha256-hex text)))
+        (unless (member h allowed :test #'string-equal)
+          (errexit (format nil "filter ~a の --info はホワイトリストにありません。~%  sha256: ~a~%  許可するなら --white-list のファイルに上記を追加するか、--no-white-list で無効化してください。"
+                           filter h)))))
+    (eval (read-from-string text))))
+
+(defun apply-filters (fns x)
+  "X に FNS を先頭から順に適用する((fN ... (f1 (f0 x))))。"
+  (dolist (fn fns x)
+    (setf x (funcall fn x))))
+
+(defun process-lambda (in out fns)
+  "[filter モード] IN のフォームを読み、各フォームの全要素に FNS を順に適用
+   (filter0 から filterN へ合成)して(プロセス内で)mapcar し、OUT に書く。"
+  (let ((*print-pretty* nil)
+        (*print-case* :downcase))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (prin1 (mapcar (lambda (e) (apply-filters fns e)) form) out)
+             (terpri out))))
+
+(defun call-with-io (input output fn)
+  "INPUT/OUTPUT(nil または \"-\" で標準入出力)を開き、(in out) で FN を呼ぶ。"
+  (when (and input  (string= input  "-")) (setf input  nil))
+  (when (and output (string= output "-")) (setf output nil))
+  (flet ((run (o)
+           (if input
+               (with-open-file (i input :external-format :utf-8)
+                 (funcall fn i o))
+               (funcall fn *standard-input* o))))
+    ;; head 等が先にパイプを閉じたら SIGPIPE(broken pipe)が来る。
+    ;; 普通の Unix ツールのように静かに終了する(backtrace を出さない)。
+    (handler-case
+        (if output
+            (with-open-file (o output :direction :output
+                                      :if-exists :supersede
+                                      :if-does-not-exist :create
+                                      :external-format :utf-8)
+              (run o))
+            (run *standard-output*))
+      (sb-int:broken-pipe ()
+        (sb-ext:exit :code 0 :abort t)))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-exec*
+  (adopt:make-option 'exec
+                     :long "exec"
+                     :parameter "CMD"
+                     :help "exec モードの外部コマンド(指定すると exec モード)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-input*
+  (adopt:make-option 'input
+                     :long "input" :short #\i
+                     :parameter "FILE"
+                     :help "入力ファイル(未指定 or \"-\" で stdin)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(未指定 or \"-\" で stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-dic*
+  (adopt:make-option 'dic
+                     :long "dic"
+                     :parameter "FILE"
+                     :help "複合語辞書(語リスト)を読み、cl-user::*mecab-private-dictionary* に束縛して filter を適用(word2word 用。内容を whitelist 照合)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-white-list*
+  (adopt:make-option 'white-list
+                     :long "white-list"
+                     :parameter "FILE"
+                     :help "許可ハッシュを追加するファイル(1 行 1 つ、# コメント可)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-no-white-list*
+  (adopt:make-option 'no-white-list
+                     :long "no-white-list"
+                     :help "ホワイトリスト照合を無効化する(filter モード)"
+                     :reduce (constantly t)))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "mapcar"
+   :summary "S 式フォームの全要素に変換を mapcar する"
+   :usage "[OPTIONS] FILTER... | --exec CMD [IN] [OUT]"
+   :help "filter モード(位置引数=filter)か exec モード(--exec)で各要素を変換する。"
+   :contents (list *o-help* *o-exec* *o-input* *o-output*
+                   *o-dic* *o-white-list* *o-no-white-list*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((cmd        (gethash 'exec opts))
+          (opt-input  (gethash 'input opts))
+          (opt-output (gethash 'output opts)))
+      (if cmd
+          ;; exec モード。位置引数 = [IN] [OUT]。
+          (progn
+            (when (> (length args) 2)
+              (errexit (format nil "余分な引数: ~{~a ~}" (cddr args))))
+            (call-with-io (or opt-input  (first args))
+                          (or opt-output (second args))
+                          (lambda (i o) (process-exec i o cmd))))
+          ;; filter モード。位置引数 = filter(filter0 から順に合成)。
+          (progn
+            (unless args (errexit "filter を 1 つ以上指定してください"))
+            (let* ((check    (not (gethash 'no-white-list opts)))
+                   (allowed  (when check (load-allowed (gethash 'white-list opts))))
+                   (dic-file (gethash 'dic opts))
+                   (fns      (mapcar (lambda (f) (filter-function f check allowed)) args)))
+              ;; --dic があれば辞書を読み(内容を whitelist 照合)、共有変数に束縛して適用する。
+              (let ((cl-user::*mecab-private-dictionary*
+                      (if dic-file
+                          (load-dic-checked dic-file check allowed)
+                          cl-user::*mecab-private-dictionary*)))
+                (call-with-io opt-input opt-output
+                              (lambda (i o) (process-lambda i o fns))))))))))

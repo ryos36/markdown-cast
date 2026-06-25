@@ -1,0 +1,164 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+word2bunsetu.ros -- ((単語 . 品詞) ...) の列を文節(風)にまとめる。
+
+各 ((単語 . 品詞) ...) を 1 つ読み、次の規則で区切って
+((文節 文節 ...) (文節 ...) ...) を 1 行ずつ出力する。
+  - 単語の表層を順に連結していく。
+  - 品詞が「助詞」または「副詞」の語を足したら、そこで 1 文節を区切る
+    (助詞・副詞はそこまでの文節にくっつく)。
+  - 単語が「。」または「、」なら、そこで 1 文節を区切り、かつ外側のリストも区切る
+    (句読点は捨てずに直前の文節にくっつく)。
+  - 全角空白「　」が来たら、そこで 1 文節を区切る(空白自体は捨てる)。手動の区切り用。
+  - それ以外の語(品詞)は見ずに連結を続ける。
+
+注: 自立語の判定はしない単純版。助詞を挟まず続く語(例「まだ無い」)は 1 文節に
+    なる。分けたいときは入力側で「、」や全角空白「　」を打つ運用とする。
+    (半角空白は mecab が捨てるので効果なし。英語の語間と被らない全角空白を使う。)
+
+使い方:
+    word2bunsetu.ros [IN] [OUT]    # 省略時 stdin/stdout、第2位置引数が出力
+    word2bunsetu.ros [IN] -o OUT   # --output OUT も可
+    word2bunsetu.ros --info        # 変換 lambda のテキストを出力(mapcar の filter 用)
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.word2bunsetu
+  (:use :cl))
+(in-package :ros.script.word2bunsetu)
+
+;; 変換ロジックの唯一の定義(引数 1 個の lambda フォーム)。
+;; 通常処理ではここから関数を作り、--info ではこのフォームを印字する。
+;; (mapcar.ros の filter モードが `--info` を read & eval して使う)
+(defparameter *bunsetsu*
+  '(lambda (form)
+     ;; ((単語 . 品詞) ...) を ((文節 ...) (文節 ...) ...) にまとめる。
+     ;; 区切り語(助詞・副詞、または句読点。、)で文節を閉じる。句読点では外側のリストも
+     ;; 区切る。閉じた直後(buf 空)にまた助詞・句読点が来たら、新しい文節を作らず直前の
+     ;; 文節の末尾にくっつける(連続した助詞・句読点はまとめる)。副詞は連結せず独立。
+     ;; 全角空白「　」は手動の文節区切り(空白自体は捨てる。半角空白は mecab が消す)。
+     ;; 直前の単語と今の単語が両方「全 ASCII の英数字語」のときだけ単語間に半角空白を入れる
+     ;; (英語の語間用。"top of the world." / micro:bit(記号は英数字でないので空白なし) /
+     ;;  ryosさん(日本語は ASCII でないので空白なし))。
+     (labels ((alnum-ascii-p (s)
+                (and (plusp (length s))
+                     (every (lambda (c) (and (< (char-code c) 128) (alphanumericp c))) s))))
+       (let ((groups nil)   ; 確定した句読点グループ(逆順)
+             (group nil)    ; 現在のグループの文節(逆順。car = 直近の文節)
+             (buf "")       ; 現在の文節の表層(文字列)
+             (prev ""))     ; 直前の単語(表層)
+         (dolist (cell form)
+         (let* ((w (car cell))
+                (p (cdr cell))
+                (punct (or (equal w "。") (equal w "、")))
+                (mergeable (or punct (equal p "助詞")))      ; 連結対象(助詞・句読点)
+                (closer (or mergeable (equal p "副詞"))))    ; 文節を閉じる語
+           (cond
+             ((equal w "　")
+              ;; 全角空白 = 手動の文節区切り。空白自体は捨て、buf があれば文節を確定する。
+              (unless (equal buf "")
+                (push buf group)
+                (setf buf "")))
+             ((and mergeable (equal buf "") group)
+              ;; 閉じた直後の助詞・句読点 -> 直前の文節にくっつける
+              (setf (car group) (concatenate 'string (car group) w)))
+             (closer
+              (push (concatenate 'string buf w) group)
+              (setf buf ""))
+             (t
+              ;; 英数字 ASCII 語が連続するなら単語間に半角空白(英語の語間用)
+              (when (and (plusp (length buf))
+                         (alnum-ascii-p prev)
+                         (alnum-ascii-p w))
+                (setf buf (concatenate 'string buf " ")))
+              (setf buf (concatenate 'string buf w))))
+           (when punct
+             (push (nreverse group) groups)
+             (setf group nil buf ""))
+           (setf prev w)))
+       (unless (equal buf "")
+         (push buf group))
+       (when group
+         (push (nreverse group) groups))
+       (nreverse groups)))))
+
+;; *bunsetsu* から作った変換関数。
+(defparameter *bunsetsu-fn* (coerce *bunsetsu* 'function))
+
+(defun print-info (out)
+  "変換 lambda のテキストを 1 個出力する(filter --info 用)。"
+  (let ((*package* (find-package :ros.script.word2bunsetu))
+        (*print-pretty* nil)
+        (*print-case* :downcase))
+    (prin1 *bunsetsu* out)
+    (terpri out)))
+
+(defun process (in out)
+  "IN から ((単語 . 品詞) ...) を 1 つずつ読み、文節 S 式を OUT に書く。"
+  (let ((*print-pretty* nil))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (prin1 (funcall *bunsetsu-fn* form) out)
+             (terpri out))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-info*
+  (adopt:make-option 'info
+                     :long "info"
+                     :help "変換 lambda のテキストを出力して終了(mapcar の filter 用)"
+                     :reduce (constantly t)))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "word2bunsetu"
+   :summary "((単語 . 品詞) ...) を ((文節 ...) ...) にまとめる"
+   :usage "[OPTIONS] [IN] [OUT]"
+   :help "助詞・副詞で文節を区切り、句読点(。、)で外側のリストを区切る。"
+   :contents (list *o-help* *o-output* *o-info*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (when (gethash 'info opts)
+      (print-info *standard-output*)
+      (uiop:quit 0))
+    (let ((input  (first args))
+          (output (or (gethash 'output opts) (second args))))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out))
+                   (process *standard-input* out))))
+        ;; head 等が先にパイプを閉じたら SIGPIPE(broken pipe)が来る。静かに終了する。
+        (handler-case
+            (if output
+                (with-open-file (out output :direction :output
+                                            :if-exists :supersede
+                                            :if-does-not-exist :create
+                                            :external-format :utf-8)
+                  (run out))
+                (run *standard-output*))
+          (sb-int:broken-pipe ()
+            (sb-ext:exit :code 0 :abort t)))))))

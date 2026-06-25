@@ -1,0 +1,2 @@
+# RUN: awk -f %S/../../bin/note2ss.awk %S/fixtures/04-escape.md > %t
+# RUN: diff %S/expected/04-escape.ss %t

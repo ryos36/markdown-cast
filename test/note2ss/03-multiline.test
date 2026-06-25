@@ -1,0 +1,2 @@
+# RUN: awk -f %S/../../bin/note2ss.awk %S/fixtures/03-multiline.md > %t
+# RUN: diff %S/expected/03-multiline.ss %t

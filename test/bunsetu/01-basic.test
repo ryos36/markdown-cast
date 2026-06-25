@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/mapcar.ros -i %S/fixtures/01-basic.ss %S/../../bin/note2word.ros %S/../../bin/word2word.ros %S/../../bin/word2bunsetu.ros > %t
+# RUN: diff %S/expected/01-basic.ss %t
