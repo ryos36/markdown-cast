@@ -1,0 +1,129 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+bunsetu2caption.ros -- スライド(文のリスト)の各文を、字幕(caption)の列に変換する。
+
+mapcar の filter として使う前提(mapcar がデッキ階層を回すので、ここで扱うのは
+1 スライド = (文 文 ...)、各文 = (文節 文節 ...))。
+
+各文について、文節を 1 つずつ足して「そこまでの累積」を 1 caption として出す。
+合計文字数(length の和)が N を超えるなら、その文節で窓をリセットして積み直す。
+文節は分割しない(1 個が N 超でも単独 caption)。
+
+    文 ("本日は" "夏休みの" "工作イベントの" "企画案を" "説明します。")  (N=10)
+      -> (("本日は") ("本日は" "夏休みの") ("工作イベントの")
+          ("企画案を") ("企画案を" "説明します。"))
+
+入力 1 スライド (文 文 ...) は (文-caption列 文-caption列 ...) になる(階層が 1 段深くなる)。
+
+N は -n / --max-chars で指定(既定 10)。変換ロジックは N を埋め込んだ引数 1 個の
+lambda として組み立て、--info でそのテキストを出力する(mapcar が read & eval する)。
+
+使い方:
+    bunsetu2caption.ros [-n N] [IN] [OUT]   # 省略時 stdin/stdout
+    bunsetu2caption.ros [-n N] --info       # 変換 lambda を出力(mapcar の filter 用)
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.bunsetu2caption
+  (:use :cl))
+(in-package :ros.script.bunsetu2caption)
+
+(defun caption-lambda (n)
+  "最大 N 文字で、スライド(文のリスト)を caption 化する lambda フォームを返す。
+   各文の文節を累積し、合計が N を超えたら窓をリセット。文節ごとに窓を 1 caption。"
+  `(lambda (slide)
+     (mapcar
+      (lambda (sentence)
+        (let ((cur nil) (total 0) (acc nil))
+          (dolist (b sentence (nreverse acc))
+            (let ((len (length b)))
+              (if (and cur (> (+ total len) ,n))
+                  (setf cur (list b) total len)
+                  (setf cur (append cur (list b)) total (+ total len)))
+              (push cur acc)))))
+      slide)))
+
+(defun print-info (out n)
+  "N を埋め込んだ変換 lambda のテキストを 1 個出力する(filter --info 用)。"
+  (let ((*package* (find-package :ros.script.bunsetu2caption))
+        (*print-pretty* nil)
+        (*print-case* :downcase))
+    (prin1 (caption-lambda n) out)
+    (terpri out)))
+
+(defun process (in out n)
+  "IN からスライドを 1 つずつ読み、caption 化した S 式を OUT に書く。"
+  (let ((fn (coerce (caption-lambda n) 'function))
+        (*print-pretty* nil)
+        (*print-case* :downcase))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (prin1 (funcall fn form) out)
+             (terpri out))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-max-chars*
+  (adopt:make-option 'max-chars
+                     :long "max-chars" :short #\n
+                     :parameter "N"
+                     :help "1 caption の最大文字数(既定 10)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-info*
+  (adopt:make-option 'info
+                     :long "info"
+                     :help "変換 lambda のテキストを出力して終了(mapcar の filter 用)"
+                     :reduce (constantly t)))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "bunsetu2caption"
+   :summary "スライド(文のリスト)の各文を字幕(caption)の列にする"
+   :usage "[OPTIONS] [IN] [OUT]"
+   :help "各文の文節を累積し、合計 N 文字を超えたら窓をリセットして caption 列を作る。"
+   :contents (list *o-help* *o-max-chars* *o-output* *o-info*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((n (let ((v (gethash 'max-chars opts)))
+               (if v (parse-integer v) 10))))
+      (when (gethash 'info opts)
+        (print-info *standard-output* n)
+        (uiop:quit 0))
+      (let ((input  (first args))
+            (output (or (gethash 'output opts) (second args))))
+        (flet ((run (out)
+                 (if input
+                     (with-open-file (in input :external-format :utf-8)
+                       (process in out n))
+                     (process *standard-input* out n))))
+          (if output
+              (with-open-file (out output :direction :output
+                                          :if-exists :supersede
+                                          :if-does-not-exist :create
+                                          :external-format :utf-8)
+                (run out))
+              (run *standard-output*)))))))

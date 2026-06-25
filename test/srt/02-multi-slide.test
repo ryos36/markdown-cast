@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/caption2srt.ros --ms 800 %S/fixtures/02-multi-slide.caption.ss > %t
+# RUN: diff %S/expected/02-multi-slide.srt %t

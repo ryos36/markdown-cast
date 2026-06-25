@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/mapcar.ros -i %S/fixtures/03-wrap.bunsetu.ss %S/../../bin/bunsetu2caption.ros > %t
+# RUN: diff %S/expected/03-wrap.ss %t

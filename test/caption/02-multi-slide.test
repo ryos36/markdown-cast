@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/mapcar.ros -i %S/fixtures/02-multi-slide.bunsetu.ss %S/../../bin/bunsetu2caption.ros > %t
+# RUN: diff %S/expected/02-multi-slide.ss %t

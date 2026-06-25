@@ -1,0 +1,129 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+caption2srt.ros -- caption の入れ子構造を平坦化して SRT 字幕を出力する。
+
+入力は caption を含む S 式(デッキ→スライド→文→caption→文節 等の入れ子)。
+「文字列だけからなるリスト」を 1 caption とみなし、出現順に全部集める。
+各 caption は文節を連結した 1 行のテキストになる。
+
+固定長(--ms ミリ秒、既定 800)で前から詰めて並べ、通し番号 1,2,3... の 1 本の
+SRT を出す。caption i の表示区間は [(i-1)*ms, i*ms)。
+
+    ("小学生〜中学生を" "対象に、")  ->  本文「小学生〜中学生を対象に、」
+
+出力例:
+    1
+    00:00:00,000 --> 00:00:02,000
+    本日は夏休みの
+
+    2
+    00:00:02,000 --> 00:00:04,000
+    工作イベントの
+
+使い方:
+    ... | caption2srt.ros [--ms MS] > out.srt
+    caption2srt.ros [--ms MS] [IN] [OUT]
+      --ms MS / -m MS   1 caption の表示長(ミリ秒、既定 800)
+      -o/--output FILE  出力ファイル(既定: stdout)
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.caption2srt
+  (:use :cl))
+(in-package :ros.script.caption2srt)
+
+(defun collect-captions (node acc)
+  "NODE を再帰走査し、文字列だけからなるリスト(=caption)を ACC(逆順)に集める。"
+  (cond
+    ((and (consp node) (every #'stringp node))
+     (cons node acc))                      ; これが 1 caption
+    ((consp node)
+     (dolist (child node acc)
+       (setf acc (collect-captions child acc))))
+    (t acc)))
+
+(defun ms->timecode (ms)
+  "ミリ秒を SRT の HH:MM:SS,mmm 形式にする。"
+  (multiple-value-bind (sec mmm) (floor ms 1000)
+    (multiple-value-bind (min ss) (floor sec 60)
+      (multiple-value-bind (hh mm) (floor min 60)
+        (format nil "~2,'0d:~2,'0d:~2,'0d,~3,'0d" hh mm ss mmm)))))
+
+(defun process (in out ms)
+  "IN の全フォームから caption を集め、SRT を OUT に書く。"
+  (let ((caps '()))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (setf caps (collect-captions form caps)))
+    (setf caps (nreverse caps))
+    (let ((i 0))
+      (dolist (cap caps)
+        (let ((text (apply #'concatenate 'string cap)))
+          (unless (string= text "")        ; 空 caption は飛ばす
+            (let ((start (* i ms))
+                  (end   (* (1+ i) ms)))
+              (incf i)
+              (format out "~d~%~a --> ~a~%~a~%~%"
+                      i (ms->timecode start) (ms->timecode end) text))))))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-ms*
+  (adopt:make-option 'ms
+                     :long "ms" :short #\m
+                     :parameter "MS"
+                     :help "1 caption の表示長(ミリ秒、既定 800)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "caption2srt"
+   :summary "caption の入れ子を平坦化して固定長の SRT 字幕を出力する"
+   :usage "[OPTIONS] [IN] [OUT]"
+   :help "文字列だけのリストを 1 caption とみなし、--ms 固定長で通し番号付き SRT にする。"
+   :contents (list *o-help* *o-ms* *o-output*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((ms     (let ((v (gethash 'ms opts))) (if v (parse-integer v) 800)))
+          (input  (first args))
+          (output (or (gethash 'output opts) (second args))))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out ms))
+                   (process *standard-input* out ms))))
+        ;; head 等が先にパイプを閉じたら SIGPIPE(broken pipe)が来る。
+        ;; 普通の Unix ツールのように静かに終了する(backtrace を出さない)。
+        (handler-case
+            (if output
+                (with-open-file (out output :direction :output
+                                            :if-exists :supersede
+                                            :if-does-not-exist :create
+                                            :external-format :utf-8)
+                  (run out))
+                (run *standard-output*))
+          (sb-int:broken-pipe ()
+            (sb-ext:exit :code 0 :abort t)))))))
