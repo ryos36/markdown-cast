@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/caption2pnglist.ros -i %S/fixtures/01-basic.caption.ss 'orig/{%03i}.png' 'new/frame.{%03j}.png' > %t
+# RUN: diff %S/expected/01-basic.txt %t

@@ -1,0 +1,7 @@
+# RUN: mkdir -p %T/orig %T/new
+# RUN: touch %T/orig/001.png %T/orig/002.png
+# RUN: printf '%T/orig/001.png %T/new/frame.001.png\n%T/orig/001.png %T/new/frame.002.png\n%T/orig/002.png %T/new/frame.003.png\n' | xargs -n 2 ln -f
+# RUN: ls %T/new/frame.001.png %T/new/frame.002.png %T/new/frame.003.png
+# RUN: find %T/new -samefile %T/orig/001.png | grep -q frame.001.png
+# RUN: find %T/new -samefile %T/orig/001.png | grep -q frame.002.png
+# RUN: find %T/new -samefile %T/orig/002.png | grep -q frame.003.png

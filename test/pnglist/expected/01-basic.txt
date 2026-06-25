@@ -1,0 +1,3 @@
+orig/001.png new/frame.001.png
+orig/001.png new/frame.002.png
+orig/001.png new/frame.003.png

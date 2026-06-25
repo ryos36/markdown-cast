@@ -1,0 +1,5 @@
+# REQUIRES: gst-launch-1.0
+# REQUIRES: ffprobe
+# RUN: gst-launch-1.0 multifilesrc location="%S/fixtures/frame.%03d.png" index=1 caps="image/png,framerate=1000/800" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=%t.mp4 filesrc location="%S/fixtures/subs.srt" ! subparse subtitle-encoding=UTF-8 ! t.
+# RUN: ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,nb_frames -of default=noprint_wrappers=1 %t.mp4 | grep -q "codec_name=h264"
+# RUN: ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=noprint_wrappers=1 %t.mp4 | grep -q "nb_frames=3"

@@ -1,0 +1,158 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+caption2pnglist.ros -- caption の入れ子から、ファイルコピー用の名前対リストを作る。
+
+入力は caption 構造(デッキ→スライド→文→caption→文節)。スライドを順に見て i を
+1,2,… と刻み、スライド内の caption(文字列だけのリスト)を出現順に出して j を全体で
+通しに増やす。各 caption ごとに、与えたテンプレートを i/j で埋めて 1 行出力する。
+
+  i = スライド番号(1 始まり。コピー元のスライド PNG を選ぶ)
+  j = caption の通し番号(1 始まり。caption2srt の SRT エントリ番号と一致)
+
+テンプレート中の `{...}` の中の %[0][幅](i|j) を置換する。例: {%03i} -> 001 / {%03j} -> 004。
+
+    ... | caption2pnglist 'event2026-08.{%03i}.png' 'event2026-08-with-caption.{%03j}.png'
+      event2026-08.001.png event2026-08-with-caption.001.png
+      event2026-08.001.png event2026-08-with-caption.002.png
+      event2026-08.002.png event2026-08-with-caption.004.png
+      ...
+    # 出力をそのまま xargs -n 2 cp に渡すとコピーできる:
+    #   ... | caption2pnglist '...{%03i}...' '...{%03j}...' | xargs -n 2 cp
+
+使い方:
+    ... | caption2pnglist [OPTIONS] TEMPLATE...
+      -i/--input FILE   入力(既定: stdin)
+      -o/--output FILE  出力(既定: stdout)
+    ※ テンプレートはシェルの brace 展開を避けるためシングルクォートで囲むこと。
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.caption2pnglist
+  (:use :cl))
+(in-package :ros.script.caption2pnglist)
+
+(defun errexit (msg)
+  (format *error-output* "caption2pnglist: ~a~%" msg)
+  (uiop:quit 1))
+
+(defun collect-captions (node acc)
+  "NODE を再帰走査し、文字列だけからなるリスト(=caption)を ACC(逆順)に集める。"
+  (cond
+    ((and (consp node) (every #'stringp node))
+     (cons node acc))
+    ((consp node)
+     (dolist (child node acc)
+       (setf acc (collect-captions child acc))))
+    (t acc)))
+
+(defun spec->string (inner i j)
+  "{...} の中身 INNER (%[0][幅](i|j)) を I/J で整形した文字列にする。"
+  (let* ((s   (if (and (plusp (length inner)) (char= (char inner 0) #\%))
+                  (subseq inner 1)
+                  inner))
+         (var (char s (1- (length s))))
+         (dig (subseq s 0 (1- (length s))))
+         (n   (cond ((char= var #\i) i)
+                    ((char= var #\j) j)
+                    (t (errexit (format nil "テンプレートの変数は i か j: {~a}" inner)))))
+         (pad (if (and (plusp (length dig)) (char= (char dig 0) #\0)) #\0 #\Space))
+         (wid (or (parse-integer dig :junk-allowed t) 0)))
+    (format nil "~v,vd" wid pad n)))
+
+(defun fill-template (tmpl i j)
+  "TMPL 中の {...} を I/J で置換した文字列を返す。波括弧外はそのまま。"
+  (with-output-to-string (out)
+    (let ((pos 0) (len (length tmpl)))
+      (loop while (< pos len)
+            for open = (position #\{ tmpl :start pos)
+            do (if open
+                   (let ((close (position #\} tmpl :start open)))
+                     (if close
+                         (progn
+                           (write-string (subseq tmpl pos open) out)
+                           (write-string (spec->string (subseq tmpl (1+ open) close) i j) out)
+                           (setf pos (1+ close)))
+                         (progn (write-string (subseq tmpl pos) out) (setf pos len))))
+                   (progn (write-string (subseq tmpl pos) out) (setf pos len)))))))
+
+(defun process (in out templates)
+  "IN の caption 構造を読み、スライド毎(i)・caption 通し(j)でテンプレートを埋めて書く。"
+  (let ((forms (loop for f = (read in nil :eof)
+                     until (eq f :eof)
+                     collect f))
+        (i 0)
+        (j 0))
+    (dolist (deck forms)
+      (dolist (slide deck)
+        (incf i)
+        (dolist (cap (nreverse (collect-captions slide nil)))
+          (let ((text (apply #'concatenate 'string cap)))
+            (unless (string= text "")          ; 空 caption は飛ばす(caption2srt と一致)
+              (incf j)
+              (format out "~{~a~^ ~}~%"
+                      (mapcar (lambda (tm) (fill-template tm i j)) templates)))))))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-input*
+  (adopt:make-option 'input
+                     :long "input" :short #\i
+                     :parameter "FILE"
+                     :help "入力ファイル(既定: stdin)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "caption2pnglist"
+   :summary "caption の入れ子からファイルコピー用の名前対リストを作る"
+   :usage "[OPTIONS] TEMPLATE..."
+   :help "各 caption について、{%03i}=スライド番号 / {%03j}=通し番号 でテンプレートを埋めて出力する。"
+   :contents (list *o-help* *o-input* *o-output*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (unless args
+      (errexit "テンプレートを 1 つ以上指定してください"))
+    (let ((templates args)
+          (input  (gethash 'input opts))
+          (output (gethash 'output opts)))
+      (when (and input  (string= input  "-")) (setf input  nil))
+      (when (and output (string= output "-")) (setf output nil))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out templates))
+                   (process *standard-input* out templates))))
+        ;; head 等が先にパイプを閉じたら静かに終了する。
+        (handler-case
+            (if output
+                (with-open-file (out output :direction :output
+                                            :if-exists :supersede
+                                            :if-does-not-exist :create
+                                            :external-format :utf-8)
+                  (run out))
+                (run *standard-output*))
+          (sb-int:broken-pipe ()
+            (sb-ext:exit :code 0 :abort t)))))))
