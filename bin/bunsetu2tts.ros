@@ -1,0 +1,120 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+bunsetu2tts.ros -- word2bunsetu の出力(文節構造)から、TTS 用に「文ごと」の
+読み上げ単位と、その文が始まる caption 番号を対にして並べる。
+
+入力: デッキ→スライド→文(=文節のリスト)。「文字列だけのリスト」を 1 文とみなす。
+出力: ((j 文) (j 文) ...) の 1 リスト。
+  j = その文が始まる caption の通し番号(1 始まり)。
+      caption は文節 1 つにつき 1 つなので、j = 先行する文節数の合計 + 1。
+      = caption2srt / caption2pnglist の番号と整合する。
+
+    入力 (... | mapcar note2word word2bunsetu):
+      ((("本日は" "夏休みの" "工作イベントの" "企画案を" "説明します。")
+        ("小学生〜中学生を" "対象に、") ...))
+    出力:
+      ((1 ("本日は" "夏休みの" "工作イベントの" "企画案を" "説明します。"))
+       (6 ("小学生〜中学生を" "対象に、"))
+       ...)
+
+TTS は各文をまるごと読み上げ、その音声が caption フレーム j から始まる、という対応。
+
+使い方:
+    ... | bunsetu2tts.ros [-i IN] [-o OUT]
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.bunsetu2tts
+  (:use :cl))
+(in-package :ros.script.bunsetu2tts)
+
+(defun collect-sentences (node acc)
+  "NODE を再帰走査し、文字列だけからなるリスト(=文)を ACC(逆順)に集める。"
+  (cond
+    ((and (consp node) (every #'stringp node))
+     (cons node acc))
+    ((consp node)
+     (dolist (child node acc)
+       (setf acc (collect-sentences child acc))))
+    (t acc)))
+
+(defun process (in out)
+  "IN の文節構造を読み、((j 文) ...) を OUT に書く。j = 文の開始 caption 番号。"
+  (let ((sentences '()))
+    (loop for form = (read in nil :eof)
+          until (eq form :eof)
+          do (setf sentences (collect-sentences form sentences)))
+    (setf sentences (nreverse sentences))
+    (let ((j 1)
+          (result '()))
+      (dolist (s sentences)
+        (when s                              ; 空文はスキップ
+          (push (list j s) result)
+          (incf j (length s))))              ; caption は文節 1 つにつき 1 つ
+      (let ((*print-pretty* nil)
+            (*print-case* :downcase))
+        (prin1 (nreverse result) out)
+        (terpri out)))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-input*
+  (adopt:make-option 'input
+                     :long "input" :short #\i
+                     :parameter "FILE"
+                     :help "入力ファイル(既定: stdin)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "bunsetu2tts"
+   :summary "文節構造から ((開始caption番号 文) ...) を作る(TTS 用)"
+   :usage "[OPTIONS]"
+   :help "各文に、その文が始まる caption の通し番号 j を付けて ((j 文) ...) を出力する。"
+   :contents (list *o-help* *o-input* *o-output*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (declare (ignore args))
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((input  (gethash 'input opts))
+          (output (gethash 'output opts)))
+      (when (and input  (string= input  "-")) (setf input  nil))
+      (when (and output (string= output "-")) (setf output nil))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out))
+                   (process *standard-input* out))))
+        ;; head 等が先にパイプを閉じたら静かに終了する。
+        (handler-case
+            (if output
+                (with-open-file (out output :direction :output
+                                            :if-exists :supersede
+                                            :if-does-not-exist :create
+                                            :external-format :utf-8)
+                  (run out))
+                (run *standard-output*))
+          (sb-int:broken-pipe ()
+            (sb-ext:exit :code 0 :abort t)))))))

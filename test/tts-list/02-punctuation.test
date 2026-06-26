@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/bunsetu2tts.ros -i %S/fixtures/02-punctuation.bunsetu.ss > %t
+# RUN: diff %S/expected/02-punctuation.ss %t

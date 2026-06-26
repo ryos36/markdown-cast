@@ -1,0 +1,556 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+tts2wav.ros -- ((A (文節...)) ...) の各文を Azure TTS で wav にし、
+((A B "連結テキスト" 再生ms) ...) を出力する。sample-script の azure-tts-curl.sh / ss2wav が元ネタ、HTTP は Dexador、
+wav の再生時間は cl-wav で解析。token は 1 回取得して使い回す。
+(入力は bunsetu2tts の出力 ((j 文) ...) をそのまま受けられる)
+
+  入力: ((1 ("本日は" "夏休みの")) (3 (...)) ...)
+  各エントリ (A 文節リスト) について:
+    - 文節を連結 -> "本日は夏休みの"
+    - 文節間に <break (--break-ms)ms>、末尾に <break (--end-ms)ms> を入れた SSML を合成し wav 化
+    - wav を --name の {%03i} を A(開始フレーム番号)で置換した名前で保存
+    - cl-wav で wav を解析し、再生時間(ms)を求める
+    - (A B "連結テキスト" 再生ms) を結果に積む
+      A = 開始フレーム番号(入力の番号), B = (length 文節)= この文がまたぐフレーム数
+  出力(stdout): ((1 2 "本日は夏休みの" 920) ...)
+
+  A はそのまま通す(--name のファイル番号にも使う)。
+
+使い方:
+    ... | tts2wav.ros --key <KEY> [--region japaneast] [--name output.{%03i}.wav]
+                      [--break-ms 120] [--end-ms 300] [--voice ja-JP-NanamiNeural]
+    ... | tts2wav.ros --token <TOKEN> ...        # issueToken を省略
+      --print-token  取得/指定したトークンを stderr に表示
+    ※ Azure を実際に叩くので、実行はキー/課金に注意。
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))   ; adopt だけ起動時に。残りは遅延ロード。
+
+(defpackage :ros.script.tts2wav
+  (:use :cl))
+(in-package :ros.script.tts2wav)
+
+(defun errexit (msg)
+  (format *error-output* "tts2wav: ~a~%" msg)
+  (uiop:quit 1))
+
+(defun ensure-http ()
+  "実際に通信/解析する直前に dexador / babel / cl-wav を読み込む(起動を速く保つ)。"
+  (ql:quickload '(:dexador :babel :cl-wav) :silent t))
+
+;; --- SSML / TTS (ss2wav と同じ要領、ここに独自に持つ) ---
+
+(defun xml-escape (s)
+  (with-output-to-string (o)
+    (loop for c across s
+          do (case c
+               (#\& (write-string "&amp;" o))
+               (#\< (write-string "&lt;" o))
+               (#\> (write-string "&gt;" o))
+               (#\" (write-string "&quot;" o))
+               (t   (write-char c o))))))
+
+(defun replace-all (string part replacement)
+  "STRING 中の PART を全て REPLACEMENT に置換した文字列を返す。"
+  (if (zerop (length part))
+      string
+      (with-output-to-string (out)
+        (loop with plen = (length part) and start = 0
+              for pos = (search part string :start2 start)
+              while pos
+              do (write-string string out :start start :end pos)
+                 (write-string replacement out)
+                 (setf start (+ pos plen))
+              finally (write-string string out :start start)))))
+
+(defun apply-dic (text dic)
+  "DIC( ((見出し . 読み) ...) )を TEXT に順に適用する(読み上げ用の置換)。"
+  (dolist (pair dic text)
+    (setf text (replace-all text (car pair) (cdr pair)))))
+
+(defun validate-dic (dic)
+  "辞書が ((\"見出し\" . \"読み\") ...) の dot 対のリストか検証する。違えば終了。"
+  (unless (listp dic)
+    (errexit "辞書は ((\"見出し\" . \"読み\") ...) のリストにしてください"))
+  (dolist (pair dic)
+    (unless (and (consp pair) (stringp (car pair)) (stringp (cdr pair)))
+      (errexit (format nil "辞書の項目が dot 対(\"見出し\" . \"読み\")になっていません: ~s~%  正: (\"micro:bit\" . \"マイクロビット\")  /  誤: (\"micro:bit\" \"マイクロビット\")  ← ドットを忘れずに"
+                       pair)))))
+
+(defun build-ssml (bunsetsu break-ms end-ms voice dic
+                   &optional (pitch "0%") (rate "0%") (style "general"))
+  "文節を連結した SSML を作る。dic は読み上げ側に適用。prosody(pitch, rate)で加工し、
+   style が general 以外なら mstts:express-as で話し方スタイルを付ける。
+   pitch/rate は相対％(0%=変化なし。-で低く/ゆっくり、+で高く/速く)。"
+  (with-output-to-string (s)
+    (format s "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xmlns:mstts=\"https://www.w3.org/2001/mstts\" xml:lang=\"ja-JP\"><voice name=\"~a\">"
+            voice)
+    (let ((styled (not (string= style "general"))))
+      (when styled
+        (format s "<mstts:express-as style=\"~a\">" style))
+      (format s "<prosody pitch=\"~a\" rate=\"~a\">" pitch rate)
+      (loop for (b . rest) on bunsetsu
+            do (write-string (xml-escape (apply-dic b dic)) s)   ; 読み辞書は SSML 側だけ
+               (when rest (format s "<break time=\"~dms\"/>" break-ms)))
+      (format s "<break time=\"~dms\"/>" end-ms)
+      (write-string "</prosody>" s)
+      (when styled
+        (write-string "</mstts:express-as>" s)))
+    (write-string "</voice></speak>" s)))
+
+(defun get-token (key region)
+  (let ((body (uiop:symbol-call
+               :dex :post
+               (format nil "https://~a.api.cognitive.microsoft.com/sts/v1.0/issueToken" region)
+               :headers `(("Ocp-Apim-Subscription-Key" . ,key)))))
+    (string-trim '(#\Space #\Newline #\Return #\Tab)
+                 (if (stringp body)
+                     body
+                     (uiop:symbol-call :babel :octets-to-string body :encoding :utf-8)))))
+
+(defun synth (token region ssml)
+  (uiop:symbol-call
+   :dex :post
+   (format nil "https://~a.tts.speech.microsoft.com/cognitiveservices/v1" region)
+   :headers `(("Authorization"            . ,(concatenate 'string "Bearer " token))
+              ("Content-Type"             . "application/ssml+xml")
+              ("X-Microsoft-OutputFormat" . "riff-24khz-16bit-mono-pcm")
+              ("User-Agent"               . "tts2wav"))
+   :content (uiop:symbol-call :babel :string-to-octets ssml :encoding :utf-8)
+   :force-binary t))
+
+(defun report-http-error (e)
+  "dexador の HTTP エラー E の status / 本文 / URI を stderr に出して終了する。"
+  (flet ((info (name) (ignore-errors (uiop:symbol-call :dexador.error name e))))
+    (let* ((status (info :response-status))
+           (uri    (info :request-uri))
+           (raw    (info :response-body))
+           (body   (cond ((stringp raw) raw)
+                         ((and (vectorp raw) (plusp (length raw)))
+                          (or (ignore-errors
+                                (uiop:symbol-call :babel :octets-to-string raw :encoding :utf-8))
+                              ""))
+                         (t ""))))
+      (format *error-output* "tts2wav: Azure が HTTP ~a を返しました~@[ (~a)~]~%" status uri)
+      (unless (string= body "")
+        (format *error-output* "  本文: ~a~%" body))
+      (format *error-output*
+              "  voice 名 / style / キー / トークン / SSML を確認してください~%")
+      (uiop:quit 1))))
+
+(defun call-handling-http (thunk)
+  "THUNK 実行中に dexador の HTTP エラーが出たら report-http-error で終了する。
+   HTTP 以外のエラーはそのまま通す(握りつぶさない)。dexador は遅延ロードなので
+   条件クラスは実行時に解決する。"
+  (handler-bind
+      ((error (lambda (e)
+                (let ((cls (uiop:find-symbol* "HTTP-REQUEST-FAILED" "DEXADOR.ERROR" nil)))
+                  (when (and cls (typep e cls))
+                    (report-http-error e))))))
+    (funcall thunk)))
+
+;; --- 再生時間(ms)を cl-wav で求める ---
+
+(defun wav-duration-ms (path)
+  "PATH の wav を cl-wav で解析し、再生時間(ミリ秒)を返す。
+   = data の chunk-data-size / fmt の average-bytes-per-second * 1000。"
+  (let* ((chunks (uiop:symbol-call :wav :read-wav-file path))
+         (fmt  (find "fmt " chunks :test #'string= :key (lambda (c) (getf c :chunk-id))))
+         (data (find "data" chunks :test #'string= :key (lambda (c) (getf c :chunk-id))))
+         (abps (getf (getf fmt :chunk-data) :average-bytes-per-second))
+         (size (getf data :chunk-data-size)))
+    (if (and abps size (plusp abps))
+        (round (* 1000 size) abps)
+        0)))
+
+;; --- ファイル名テンプレート {%03i} -> 番号 ---
+
+(defun spec->string (inner num)
+  "{...} の中身 INNER (%[0][幅]文字) を NUM で整形する。"
+  (let* ((s   (if (and (plusp (length inner)) (char= (char inner 0) #\%))
+                  (subseq inner 1)
+                  inner))
+         (dig (if (plusp (length s)) (subseq s 0 (1- (length s))) ""))  ; 末尾の文字(i 等)を落とす
+         (pad (if (and (plusp (length dig)) (char= (char dig 0) #\0)) #\0 #\Space))
+         (wid (or (parse-integer dig :junk-allowed t) 0)))
+    (format nil "~v,vd" wid pad num)))
+
+(defun fill-name (tmpl num)
+  "TMPL 中の {...} を NUM で置換した文字列を返す。"
+  (with-output-to-string (out)
+    (let ((pos 0) (len (length tmpl)))
+      (loop while (< pos len)
+            for open = (position #\{ tmpl :start pos)
+            do (if open
+                   (let ((close (position #\} tmpl :start open)))
+                     (if close
+                         (progn
+                           (write-string (subseq tmpl pos open) out)
+                           (write-string (spec->string (subseq tmpl (1+ open) close) num) out)
+                           (setf pos (1+ close)))
+                         (progn (write-string (subseq tmpl pos) out) (setf pos len))))
+                   (progn (write-string (subseq tmpl pos) out) (setf pos len)))))))
+
+;; --- tts-info.ss(キャッシュ用メタデータ) ---
+;; 1 ファイルにつき plist: (:name "output.NNN.wav" :segments (読み適用後の文節...)
+;;                          :settings (:voice :pitch :rate :style :break-ms :end-ms) :ms 尺)
+;; これがあれば SSML を再生成できる。比較キー = (segments settings)。
+
+(defun path-directory (path)
+  "PATH の最後の / まで(ディレクトリ部、末尾 / 付き)。無ければ \"\"。"
+  (let ((slash (position #\/ path :from-end t)))
+    (if slash (subseq path 0 (1+ slash)) "")))
+
+(defun path-basename (path)
+  (let ((slash (position #\/ path :from-end t)))
+    (if slash (subseq path (1+ slash)) path)))
+
+(defun settings-plist (voice pitch rate style break-ms end-ms)
+  "音声を決める設定(順序固定。equal で比較)。region は音声に影響しないので含めない。"
+  (list :voice voice :pitch pitch :rate rate :style style :break-ms break-ms :end-ms end-ms))
+
+(defun entry-key (segments settings)
+  "比較キー = (読み適用後の文節リスト 設定plist)。同じなら SSML 同一=音声同一。"
+  (list segments settings))
+
+(defun load-info (path)
+  "tts-info.ss(plist のリスト)を読み、basename->plist のハッシュにして返す(無ければ空)。"
+  (let ((table (make-hash-table :test 'equal)))
+    (when (probe-file path)
+      (with-open-file (in path :external-format :utf-8)
+        (let ((forms (let ((*read-eval* nil)) (read in nil :eof))))
+          (when (listp forms)
+            (dolist (rec forms)
+              (let ((name (getf rec :name)))
+                (when name (setf (gethash name table) rec))))))))
+    table))
+
+(defun write-info (path records)
+  "RECORDS(plist のリスト)を 1 個のリストとして PATH に書く(毎回上書き)。"
+  (ensure-directories-exist path)
+  (with-open-file (o path :direction :output :if-exists :supersede
+                          :if-does-not-exist :create :external-format :utf-8)
+    (let ((*print-pretty* nil) (*print-case* :downcase) (*print-readably* nil))
+      (write-char #\( o)
+      (loop for rec in records for firstp = t then nil
+            do (unless firstp (terpri o)) (prin1 rec o))
+      (write-string ")" o)
+      (terpri o))))
+
+(defun append-backup-info (backup-info-path rec)
+  "backup-wav/tts-info.ss に REC を 1 行追記する(1 行 1 plist。追記しやすい形)。"
+  (ensure-directories-exist backup-info-path)
+  (with-open-file (o backup-info-path :direction :output
+                                      :if-exists :append :if-does-not-exist :create
+                                      :external-format :utf-8)
+    (let ((*print-pretty* nil) (*print-case* :downcase) (*print-readably* nil))
+      (prin1 rec o) (terpri o))))
+
+(defun next-backup-path (backup-dir basename)
+  "BACKUP-DIR 内で BASENAME(例 output.056.wav)の退避先 output.056.NNN.wav を 001 から空きで返す。"
+  (let* ((dot  (position #\. basename :from-end t))
+         (stem (if dot (subseq basename 0 dot) basename))
+         (ext  (if dot (subseq basename dot) "")))
+    (loop for k from 1 to 999
+          for cand = (format nil "~a/~a.~3,'0d~a" backup-dir stem k ext)
+          unless (probe-file cand) do (return cand))))
+
+(defun backup-file (path backup-dir old-rec backup-info-path)
+  "既存 PATH を BACKUP-DIR へ番号つきで mv し、その info(old-rec か最小情報)を追記する。"
+  (ensure-directories-exist (format nil "~a/" backup-dir))
+  (let* ((base (path-basename path))
+         (dest (next-backup-path backup-dir base)))
+    (uiop:run-program (list "mv" path dest))
+    (let ((rec (if old-rec (copy-list old-rec) (list :name nil))))
+      (setf (getf rec :name) (path-basename dest))
+      (unless old-rec (setf (getf rec :note) "退避: 旧 info なし"))
+      (append-backup-info backup-info-path rec))
+    dest))
+
+(defun run (entries get-tok region name break-ms end-ms voice log dic dry-run
+            pitch rate style dry-ms info-path backup-dir)
+  "各文を wav 化。ただし info と一致する既存ファイルは作らない(Azure を呼ばない)。
+   違う/info 無しのファイルは backup-dir へ退避してから生成する。GET-TOK は token を
+   遅延取得する関数(実際に synth するときだけ呼ぶ=全部再利用なら Azure に触れない)。"
+  (let* ((*print-pretty* nil)
+         (*print-case* :downcase)
+         (result '())
+         (settings  (settings-plist voice pitch rate style break-ms end-ms))
+         (orig-info (if dry-run (make-hash-table :test 'equal) (load-info info-path)))
+         (backup-info-path (format nil "~a/tts-info.ss" backup-dir))
+         (new-records '())
+         (reused 0) (made 0) (backed 0))
+    (dolist (e entries)
+      (destructuring-bind (a bunsetsu) e
+        (let* ((blen     (length bunsetsu))
+               (segments (mapcar (lambda (b) (apply-dic b dic)) bunsetsu))  ; 読み適用後
+               (text     (apply #'concatenate 'string segments))
+               (file     (fill-name name a))
+               (base     (path-basename file))
+               (ssml     (build-ssml bunsetsu break-ms end-ms voice dic pitch rate style))
+               (old-rec  (gethash base orig-info))
+               (cur-key  (entry-key segments settings))
+               (exists   (and (not dry-run) (probe-file file)))
+               (dur      0)
+               (tag      "make"))
+          (cond
+            (dry-run
+             (setf dur (* blen dry-ms) tag "dry"))
+            ((and exists old-rec
+                  (equal cur-key (entry-key (getf old-rec :segments) (getf old-rec :settings))))
+             ;; 同じ設定・同じ読み → 作らない。既存 wav の尺を測って使う。
+             (setf dur (wav-duration-ms file) tag "reuse")
+             (incf reused))
+            (t
+             ;; 違う/info 無し → 既存があれば退避してから Azure 生成。
+             (when exists
+               (backup-file file backup-dir old-rec backup-info-path)
+               (incf backed))
+             (let ((wav (synth (funcall get-tok) region ssml)))
+               (with-open-file (o file :direction :output :element-type '(unsigned-byte 8)
+                                       :if-exists :supersede :if-does-not-exist :create)
+                 (write-sequence wav o))
+               (setf dur (wav-duration-ms file) tag "make"))
+             (incf made)))
+          (when log
+            (format log "tts2wav[~a]: ~a (~d ms)~%" tag file dur)
+            (format log "  ssml: ~a~%" ssml))
+          (unless dry-run
+            (push (list :name base :segments segments :settings settings :ms dur) new-records))
+          (push (list a blen text dur) result))))
+    (unless dry-run
+      (write-info info-path (nreverse new-records))
+      (format *error-output* "tts2wav: 再利用 ~d / 生成 ~d / 退避 ~d (info: ~a)~%"
+              reused made backed info-path))
+    (prin1 (nreverse result) *standard-output*)
+    (terpri *standard-output*)))
+
+(defun bootstrap (entries name break-ms end-ms voice dic pitch rate style info-path backup-dir)
+  "Azure を叩かず、いまある wav から初期 info を作る。
+   tts.ss を順に見て、連続して在る前半の info(読み適用後の文節+設定+尺)を info-path に書き、
+   それ以外(最初に欠けた A 以降や、現行 A でない旧世代の残骸)の wav は backup-dir へ退避する。
+   既存の正しいぶんを次回以降そのまま再利用するための初期化。"
+  (ql:quickload :cl-wav :silent t)
+  (let* ((settings (settings-plist voice pitch rate style break-ms end-ms))
+         (orig-dir (let ((d (path-directory (fill-name name 1)))) (if (string= d "") "./" d)))
+         (backup-info-path (format nil "~a/tts-info.ss" backup-dir))
+         (records '())
+         (keep    (make-hash-table :test 'equal))   ; 残す basename
+         (stopped nil))
+    (dolist (e entries)
+      (destructuring-bind (a bunsetsu) e
+        (let* ((file (fill-name name a)) (base (path-basename file)))
+          (cond
+            (stopped)                                ; 打ち切り後は触らない
+            ((probe-file file)
+             (let ((segments (mapcar (lambda (b) (apply-dic b dic)) bunsetsu))
+                   (dur      (wav-duration-ms file)))
+               (push (list :name base :segments segments :settings settings :ms dur) records)
+               (setf (gethash base keep) t)))
+            (t (setf stopped t)
+               (format *error-output* "tts2wav(bootstrap): A=~d の wav が無いのでここまでを info 化~%" a))))))
+    (let ((nrec (length records)))
+      (write-info info-path (nreverse records))
+    ;; keep 以外の orig-wav の wav を退避する。
+    (let ((moved 0))
+      (dolist (path (directory (pathname (concatenate 'string orig-dir "*.wav"))))
+        (let ((base (file-namestring path)))
+          (unless (gethash base keep)
+            (ensure-directories-exist (format nil "~a/" backup-dir))
+            (let ((dest (next-backup-path backup-dir base)))
+              (uiop:run-program (list "mv" (namestring path) dest))
+              (append-backup-info backup-info-path
+                                  (list :name (path-basename dest)
+                                        :note "bootstrap 退避(旧世代/info なし)"))
+              (incf moved)))))
+      (format *error-output* "tts2wav(bootstrap): info ~d 件 / 退避 ~d 件 -> ~a~%"
+              nrec moved backup-dir)))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help :long "help" :short #\h
+                     :help "このヘルプを表示して終了する" :reduce (constantly t)))
+
+(defparameter *o-key*
+  (adopt:make-option 'key :long "key" :parameter "KEY"
+                     :help "Azure Speech のサブスクリプションキー" :reduce #'adopt:last))
+
+(defparameter *o-token*
+  (adopt:make-option 'token :long "token" :parameter "TOKEN"
+                     :help "アクセストークンを直接指定(issueToken を省略、--key は無視。synth の URL には --region を使う)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-print-token*
+  (adopt:make-option 'print-token :long "print-token"
+                     :help "取得/指定したトークンを stderr に表示する" :reduce (constantly t)))
+
+(defparameter *o-region*
+  (adopt:make-option 'region :long "region" :parameter "REGION"
+                     :help "Azure リージョン(既定: japaneast)" :reduce #'adopt:last))
+
+(defparameter *o-name*
+  (adopt:make-option 'name :long "name" :parameter "TEMPLATE"
+                     :help "wav 名テンプレート。{%03i} を A(番号)で置換(既定: output.{%03i}.wav)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-break*
+  (adopt:make-option 'break-ms :long "break-ms" :parameter "MS"
+                     :help "文節間に入れる break(ミリ秒、既定 120)" :reduce #'adopt:last))
+
+(defparameter *o-end*
+  (adopt:make-option 'end-ms :long "end-ms" :parameter "MS"
+                     :help "末尾に入れる break(ミリ秒、既定 0)" :reduce #'adopt:last))
+
+(defparameter *o-voice*
+  (adopt:make-option 'voice :long "voice" :parameter "NAME"
+                     :help "音声名(既定: ja-JP-NanamiNeural)" :reduce #'adopt:last))
+
+(defparameter *o-pitch*
+  (adopt:make-option 'pitch :long "pitch" :parameter "PITCH"
+                     :help "prosody pitch(既定: 0% = 変化なし。例 -10%)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-rate*
+  (adopt:make-option 'rate :long "rate" :parameter "RATE"
+                     :help "prosody rate(既定: 0% = 変化なし。-でゆっくり/+で速く。例 -15%)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-style*
+  (adopt:make-option 'style :long "style" :parameter "STYLE"
+                     :help "mstts:express-as の話し方スタイル(既定: general。Nanami は chat/cheerful/customerservice 等。声が非対応だと general 扱い)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-input*
+  (adopt:make-option 'input :long "input" :short #\i :parameter "FILE"
+                     :help "入力ファイル(既定: stdin)" :reduce #'adopt:last))
+
+(defparameter *o-log*
+  (adopt:make-option 'log :long "log" :parameter "FILE"
+                     :help "各 wav の進捗(ファイル名/バイト数/再生ms)をこのファイルに書く(無指定なら出さない)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-dic*
+  (adopt:make-option 'dic :long "dic" :parameter "FILE"
+                     :help "読み辞書 ((見出し . 読み) ...) の S 式ファイル。SSML(読み上げ)側だけ置換する"
+                     :reduce #'adopt:last))
+
+(defparameter *o-dry-run*
+  (adopt:make-option 'dry-run :long "dry-run"
+                     :help "Azure を叩かず wav も作らず、再生時間を blen*(--dry-run-ms)で見積もる(--key/--token 不要)"
+                     :reduce (constantly t)))
+
+(defparameter *o-dry-run-ms*
+  (adopt:make-option 'dry-run-ms :long "dry-run-ms" :parameter "MS"
+                     :help "--dry-run のときの 1 文節あたりの見積もり再生時間(ミリ秒、既定 200)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-limit*
+  (adopt:make-option 'limit :long "limit" :parameter "N"
+                     :help "最初の N 件だけ処理して終了する(0=無制限。一気に全部失敗しないための試験用)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-info*
+  (adopt:make-option 'info :long "info" :parameter "FILE"
+                     :help "キャッシュ用 info(tts-info.ss)。同じ読み・設定の既存 wav は作らない。既定: --name のディレクトリ/tts-info.ss"
+                     :reduce #'adopt:last))
+
+(defparameter *o-backup-dir*
+  (adopt:make-option 'backup-dir :long "backup-dir" :parameter "DIR"
+                     :help "設定が違う既存 wav の退避先(番号つき)。既定: _build/backup-wav"
+                     :reduce #'adopt:last))
+
+(defparameter *o-bootstrap*
+  (adopt:make-option 'bootstrap :long "bootstrap"
+                     :help "Azure を叩かず、いまある wav から info を作る。連続して在る前半を info 化し、それ以外を backup-dir へ退避する(初期化用)"
+                     :reduce (constantly t)))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "tts2wav"
+   :summary "((A (文節...)) ...) を Azure TTS で wav にし ((A B 連結 再生ms) ...) を出す"
+   :usage "[OPTIONS] (--key KEY | --token TOKEN)"
+   :help "各文を wav 化し、cl-wav で測った再生時間(ms)を付けて返す。A は --name の番号に使う。info があれば同じ読み・設定の wav は作らない(Azure を呼ばない)。"
+   :contents (list *o-help* *o-key* *o-token* *o-print-token* *o-region*
+                   *o-name* *o-break* *o-end* *o-voice* *o-pitch* *o-rate* *o-style*
+                   *o-input* *o-log* *o-dic*
+                   *o-dry-run* *o-dry-run-ms* *o-limit*
+                   *o-info* *o-backup-dir* *o-bootstrap*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (declare (ignore args))
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((key       (gethash 'key opts))
+          (given-tok (gethash 'token opts))
+          (region    (or (gethash 'region opts) "japaneast"))
+          (name      (or (gethash 'name opts) "output.{%03i}.wav"))
+          (break-ms  (parse-integer (or (gethash 'break-ms opts) "120")))
+          (end-ms    (parse-integer (or (gethash 'end-ms opts) "0")))
+          (voice     (or (gethash 'voice opts) "ja-JP-NanamiNeural"))
+          (pitch     (or (gethash 'pitch opts) "0%"))
+          (rate      (or (gethash 'rate opts) "0%"))
+          (style     (or (gethash 'style opts) "general"))
+          (print-tok (gethash 'print-token opts))
+          (in-file   (gethash 'input opts))
+          (log-file  (gethash 'log opts))
+          (dic-file  (gethash 'dic opts))
+          (dry-run   (gethash 'dry-run opts))
+          (dry-ms    (parse-integer (or (gethash 'dry-run-ms opts) "200")))
+          (limit     (parse-integer (or (gethash 'limit opts) "0")))
+          (bootstrap-mode (gethash 'bootstrap opts))
+          (backup-dir (or (gethash 'backup-dir opts) "_build/backup-wav")))
+      ;; bootstrap と dry-run は Azure 不要。それ以外は --key/--token が要る。
+      (unless (or bootstrap-mode dry-run key given-tok)
+        (errexit "--key か --token のどちらかが必要です(--dry-run / --bootstrap のときは不要)"))
+      (let* ((entries (if in-file
+                          (with-open-file (in in-file :external-format :utf-8)
+                            (read in))
+                          (read *standard-input*)))
+             (dic (when dic-file
+                    (with-open-file (in dic-file :external-format :utf-8)
+                      (read in))))
+             ;; info の既定は --name のディレクトリ直下の tts-info.ss。
+             (info-path (or (gethash 'info opts)
+                            (concatenate 'string (path-directory (fill-name name 1)) "tts-info.ss"))))
+        (unless (listp entries)
+          (errexit "入力は ((番号 (文節...)) ...) のリストにしてください"))
+        (when dic (validate-dic dic))   ; --dry-run でも辞書形式を検証する
+        ;; --limit N (>0) なら最初の N 件だけ処理する(0=無制限)。
+        (when (and (> limit 0) (> (length entries) limit))
+          (setf entries (subseq entries 0 limit)))
+        (cond
+          ;; bootstrap: いまある wav から info を作って退避するだけ(Azure 不要)。
+          (bootstrap-mode
+           (bootstrap entries name break-ms end-ms voice dic pitch rate style info-path backup-dir)
+           (format *error-output* "tts2wav: bootstrap 完了~%"))
+          (t
+           (unless dry-run (ensure-http))   ; dry-run は dexador/cl-wav 不要
+           ;; token は実際に synth するときだけ遅延取得する(全部再利用なら Azure に触れない)。
+           (let* ((tok nil) (got nil)
+                  (get-tok (lambda ()
+                             (unless got
+                               (setf tok (or given-tok (get-token key region)) got t)
+                               (when (and print-tok tok) (format *error-output* "~a~%" tok)))
+                             tok)))
+             (call-handling-http
+              (lambda ()
+                (if log-file
+                    (with-open-file (log log-file :direction :output
+                                                  :if-exists :supersede
+                                                  :if-does-not-exist :create
+                                                  :external-format :utf-8)
+                      (run entries get-tok region name break-ms end-ms voice log dic dry-run
+                           pitch rate style dry-ms info-path backup-dir))
+                    (run entries get-tok region name break-ms end-ms voice nil dic dry-run
+                         pitch rate style dry-ms info-path backup-dir))
+                (format *error-output* "tts2wav: 終了したよ!! (~d 件処理~@[、--limit ~d~])~%"
+                        (length entries) (when (> limit 0) limit)))))))))))
