@@ -1,0 +1,167 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+ss2finalpng.ros -- new-png を final-png へ通し番号で並べ直す ln 用「コピー元 コピー先」
+リスト(1 行ずつ)を、全フレーム分(caption.ss 基準)で作る。
+
+final 系で動画を作り直す理由は「factor>threshold の文でフレームを足して読み上げを遅くする」
+ことだけ。その挿入情報(n)と通し番号ずれは wavlist.ss が持つが、wavlist.ss は音声のある文しか
+無いので、それだけで並べると音声の無い後半フレームが移動先を持たず動画が途中で終わる。
+そこで「全フレーム(=caption.ss の caption 数 N)を出し、wavlist.ss は挿入の地図としてだけ使う」。
+  - wavlist.ss の各エントリ (… A factor B ms n new-rate running …) から、その文の末尾フレーム
+    (A+B-1)の後ろに n フレーム(末尾 caption の複製)を挿入する、と読む。
+  - フレーム k の final 位置 = k + (k より前で挿入された総数)。
+  - wavlist.ss が尽きた後(音声なしの後半)は、累積ずれぶんだけずらして 1:1 でそのまま ln。
+
+入力:
+  -i/--input    wavlist.ss(挿入の地図。未指定 or - で stdin。空なら全フレーム 1:1)
+  -c/--captions caption.ss(全フレーム数 N を数える。必須)
+出力(1 行 = "src dst"。`xargs -n 2 ln -f` でハードリンク):
+  位置引数 = [SRC-TEMPLATE] [DST-TEMPLATE]。{%03i} をフレーム番号で置換。
+  既定 _build/new-png/event2026-08-with-caption.{%03i}.png
+       _build/final-png/event2026-08-with-caption.{%03i}.png
+データを読むだけなので *read-eval* は無効。
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.ss2finalpng
+  (:use :cl))
+(in-package :ros.script.ss2finalpng)
+
+(defun errexit (msg)
+  (format *error-output* "ss2finalpng: ~a~%" msg)
+  (uiop:quit 1))
+
+(defun spec->string (inner num)
+  (let* ((s   (if (and (plusp (length inner)) (char= (char inner 0) #\%)) (subseq inner 1) inner))
+         (dig (if (plusp (length s)) (subseq s 0 (1- (length s))) ""))
+         (pad (if (and (plusp (length dig)) (char= (char dig 0) #\0)) #\0 #\Space))
+         (wid (or (parse-integer dig :junk-allowed t) 0)))
+    (format nil "~v,vd" wid pad num)))
+
+(defun fill-name (tmpl num)
+  (with-output-to-string (out)
+    (let ((pos 0) (len (length tmpl)))
+      (loop while (< pos len)
+            for open = (position #\{ tmpl :start pos)
+            do (if open
+                   (let ((close (position #\} tmpl :start open)))
+                     (if close
+                         (progn
+                           (write-string (subseq tmpl pos open) out)
+                           (write-string (spec->string (subseq tmpl (1+ open) close) num) out)
+                           (setf pos (1+ close)))
+                         (progn (write-string (subseq tmpl pos) out) (setf pos len))))
+                   (progn (write-string (subseq tmpl pos) out) (setf pos len)))))))
+
+;; --- caption.ss から全フレーム数 N を数える(caption2srt / ss2finalsrt と同じ規則) ---
+
+(defun collect-captions (node acc)
+  "NODE を再帰走査し、文字列だけからなるリスト(=caption)を ACC(逆順)に集める。"
+  (cond
+    ((and (consp node) (every #'stringp node)) (cons node acc))
+    ((consp node) (dolist (child node acc) (setf acc (collect-captions child acc))))
+    (t acc)))
+
+(defun count-frames (path)
+  "caption.ss を読み、空でない caption の数(=フレーム数 N)を返す。"
+  (with-open-file (in path :external-format :utf-8)
+    (let ((caps '()))
+      (loop for form = (let ((*read-eval* nil)) (read in nil :eof))
+            until (eq form :eof)
+            do (setf caps (collect-captions form caps)))
+      (let ((n 0))
+        (dolist (cap (nreverse caps))
+          (unless (string= "" (apply #'concatenate 'string cap)) (incf n)))
+        n))))
+
+;; --- wavlist.ss から「フレーム k の後ろに挿入する数」の表を作る ---
+
+(defun read-extra-after (in n-total)
+  "wavlist.ss を読み、extra[k] = フレーム k(=ある文の末尾 A+B-1)の後ろに挿入する数、を返す。
+   IN が空(:eof)なら全 0(挿入なし=全フレーム 1:1)。"
+  (let ((extra (make-array (1+ n-total) :initial-element 0))
+        (entries (let ((*read-eval* nil)) (read in nil :eof))))
+    (unless (eq entries :eof)
+      (unless (listp entries)
+        (errexit "wavlist.ss は 1 個のリストにしてください"))
+      (dolist (e entries)
+        (let ((a (nth 2 e)) (b (nth 4 e)) (n (nth 6 e)))
+          (unless (and (integerp a) (integerp b) (integerp n))
+            (errexit (format nil "要素の A/B/n が整数ではありません: ~s" e)))
+          (when (plusp n)
+            (let ((last (+ a (1- b))))                 ; その文の末尾フレーム
+              (when (<= 1 last n-total)
+                (incf (aref extra last) n)))))))
+    extra))
+
+(defun process (in out src-tmpl dst-tmpl n-total)
+  (let ((extra  (read-extra-after in n-total))
+        (offset 0))
+    (loop for k from 1 to n-total
+          for final = (+ k offset)
+          do (format out "~a ~a~%" (fill-name src-tmpl k) (fill-name dst-tmpl final))
+             (let ((e (aref extra k)))               ; 末尾フレームなら n 個複製して挿入
+               (dotimes (d e)
+                 (format out "~a ~a~%"
+                         (fill-name src-tmpl k)
+                         (fill-name dst-tmpl (+ final 1 d))))
+               (incf offset e)))))
+
+;; --- adopt ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help :long "help" :short #\h
+                     :help "このヘルプを表示して終了する" :reduce (constantly t)))
+(defparameter *o-input*
+  (adopt:make-option 'input :long "input" :short #\i :parameter "FILE"
+                     :help "入力 wavlist.ss(挿入の地図。未指定 or - で stdin)" :reduce #'adopt:last))
+(defparameter *o-output*
+  (adopt:make-option 'output :long "output" :short #\o :parameter "FILE"
+                     :help "出力(未指定 or - で stdout)" :reduce #'adopt:last))
+(defparameter *o-captions*
+  (adopt:make-option 'captions :long "captions" :short #\c :parameter "FILE"
+                     :help "caption.ss(全フレーム数 N を数える。必須)" :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "ss2finalpng"
+   :summary "wavlist.ss(挿入の地図)と caption.ss(全フレーム数)から new-png->final-png の ln リストを作る"
+   :usage "[OPTIONS] [SRC-TEMPLATE] [DST-TEMPLATE]"
+   :help "全フレームを通し番号で並べ直す。wavlist が尽きた後は累積ずれぶんずらして 1:1 で ln。"
+   :contents (list *o-help* *o-input* *o-output* *o-captions*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((input    (gethash 'input opts))
+          (output   (gethash 'output opts))
+          (captions (gethash 'captions opts))
+          (src-tmpl (or (first args)  "_build/new-png/event2026-08-with-caption.{%03i}.png"))
+          (dst-tmpl (or (second args) "_build/final-png/event2026-08-with-caption.{%03i}.png")))
+      (unless captions (errexit "caption.ss を -c/--captions で指定してください 例: -c _build/caption.ss"))
+      (when (and input  (string= input  "-")) (setf input  nil))
+      (when (and output (string= output "-")) (setf output nil))
+      (let ((n-total (count-frames captions)))
+        (when (zerop n-total) (errexit "caption.ss にフレームがありません"))
+        (flet ((run (o)
+                 (if input
+                     (with-open-file (in input :external-format :utf-8)
+                       (process in o src-tmpl dst-tmpl n-total))
+                     (process *standard-input* o src-tmpl dst-tmpl n-total))))
+          (handler-case
+              (if output
+                  (with-open-file (o output :direction :output
+                                            :if-exists :supersede :if-does-not-exist :create
+                                            :external-format :utf-8)
+                    (run o))
+                  (run *standard-output*))
+            (sb-int:broken-pipe ()
+              (sb-ext:exit :code 0 :abort t))))))))

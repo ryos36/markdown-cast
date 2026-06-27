@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/ss2finalsrt.ros -i %S/fixtures/wavlist-n1.ss --capms 800 %S/fixtures/caption-2.ss > %t
+# RUN: diff %S/expected/02-extra-frame.srt %t

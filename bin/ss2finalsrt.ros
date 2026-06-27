@@ -1,0 +1,143 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+ss2finalsrt.ros -- wavlist.ss と caption.ss から、final(通し番号)用に再タイミングした SRT を作る。
+
+字幕本文は subs.srt をリバースせず、中間の caption.ss を caption2srt と同じ規則で平坦化して得る
+(「文字列だけのリスト」=1 caption を出現順に集め、連結。空は飛ばす=フレーム番号と一致)。
+new-png->final-png の並べ直し(ss2finalpng と同じ規則)に合わせて時刻をずらす:
+  - 各文の caption A..A+B-1 を final フレーム running..running+B-1 に対応。
+  - 文末 caption(A+B-1)は追加 n フレームぶん延長(=表示を (1+n) フレーム分にする)。
+  - 1 フレーム = capms ミリ秒。
+
+使い方:
+    ss2finalsrt.ros -i wavlist.ss [--capms 800] CAPTION.ss [-o final.srt]
+  入力 ss は -i か stdin。CAPTION.ss は位置引数(必須)。出力は -o か stdout。
+データを読むだけなので *read-eval* は無効。
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.ss2finalsrt
+  (:use :cl))
+(in-package :ros.script.ss2finalsrt)
+
+(defun errexit (msg)
+  (format *error-output* "ss2finalsrt: ~a~%" msg)
+  (uiop:quit 1))
+
+(defun ms->srt (ms)
+  "ミリ秒 -> \"HH:MM:SS,mmm\"。"
+  (multiple-value-bind (s mmm) (floor ms 1000)
+    (multiple-value-bind (m ss) (floor s 60)
+      (multiple-value-bind (h mm) (floor m 60)
+        (format nil "~2,'0d:~2,'0d:~2,'0d,~3,'0d" h mm ss mmm)))))
+
+(defun collect-captions (node acc)
+  "NODE を再帰走査し、文字列だけからなるリスト(=caption)を ACC(逆順)に集める(caption2srt と同じ)。"
+  (cond
+    ((and (consp node) (every #'stringp node)) (cons node acc))
+    ((consp node) (dolist (child node acc) (setf acc (collect-captions child acc))))
+    (t acc)))
+
+(defun flatten-caption-texts (path)
+  "caption.ss を読み、caption を出現順に平坦化し、各々を連結した本文のベクタを返す。
+   空 caption は飛ばす(caption2srt と同じ規則なので、フレーム番号=caption 番号と一致)。"
+  (with-open-file (in path :external-format :utf-8)
+    (let ((caps '()))
+      (loop for form = (let ((*read-eval* nil)) (read in nil :eof))
+            until (eq form :eof)
+            do (setf caps (collect-captions form caps)))
+      (let ((texts '()))
+        (dolist (cap (nreverse caps))
+          (let ((text (apply #'concatenate 'string cap)))
+            (unless (string= text "") (push text texts))))
+        (coerce (nreverse texts) 'vector)))))
+
+(defun read-extra-after (in n-total)
+  "wavlist.ss を読み、extra[k] = フレーム k(=ある文の末尾 A+B-1)の後ろに挿入する数、を返す。
+   IN が空(:eof)なら全 0(挿入なし)。ss2finalpng と同じ規則。"
+  (let ((extra (make-array (1+ n-total) :initial-element 0))
+        (entries (let ((*read-eval* nil)) (read in nil :eof))))
+    (unless (eq entries :eof)
+      (unless (listp entries) (errexit "wavlist.ss は 1 個のリストにしてください"))
+      (dolist (e entries)
+        (let ((a (nth 2 e)) (b (nth 4 e)) (n (nth 6 e)))
+          (when (plusp n)
+            (let ((last (+ a (1- b))))
+              (when (<= 1 last n-total)
+                (incf (aref extra last) n)))))))
+    extra))
+
+(defun process (in out texts capms)
+  "全フレーム(=texts の本数 N)について SRT を出す。wavlist.ss は挿入(n)の地図としてだけ使い、
+   音声の無い後半フレームも含めて、通し番号(挿入ぶんずれる)に合わせて時刻を付ける。"
+  (let* ((n-total (length texts))
+         (extra   (read-extra-after in n-total))
+         (offset  0)
+         (m       0))
+    (loop for k from 1 to n-total
+          for final = (+ k offset)
+          for ekn   = (aref extra k)
+          for dur   = (+ 1 ekn)                        ; 文末は (1+n) フレーム分表示
+          for start = (* (1- final) capms)
+          for end   = (* (+ (1- final) dur) capms)
+          for text  = (aref texts (1- k))
+          do (incf m)
+             (format out "~d~%~a --> ~a~%~a~%~%" m (ms->srt start) (ms->srt end) text)
+             (incf offset ekn))))
+
+;; --- adopt ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help :long "help" :short #\h
+                     :help "このヘルプを表示して終了する" :reduce (constantly t)))
+(defparameter *o-input*
+  (adopt:make-option 'input :long "input" :short #\i :parameter "FILE"
+                     :help "入力 wavlist.ss(未指定 or - で stdin)" :reduce #'adopt:last))
+(defparameter *o-output*
+  (adopt:make-option 'output :long "output" :short #\o :parameter "FILE"
+                     :help "出力 SRT(未指定 or - で stdout)" :reduce #'adopt:last))
+(defparameter *o-capms*
+  (adopt:make-option 'capms :long "capms" :parameter "MS"
+                     :help "1 フレームの長さ(既定 800)" :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "ss2finalsrt"
+   :summary "wavlist.ss と caption.ss から final 用の再タイミング SRT を作る"
+   :usage "[OPTIONS] CAPTION.ss"
+   :help "通し番号に合わせて字幕の時刻をずらす(文末 caption は追加フレームぶん延長)。"
+   :contents (list *o-help* *o-input* *o-output* *o-capms*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((input  (gethash 'input opts))
+          (output (gethash 'output opts))
+          (capms  (parse-integer (or (gethash 'capms opts) "800")))
+          (capss  (first args)))
+      (unless capss (errexit "caption.ss を位置引数で指定してください 例: _build/caption.ss"))
+      (when (and input  (string= input  "-")) (setf input  nil))
+      (when (and output (string= output "-")) (setf output nil))
+      (let ((texts (flatten-caption-texts capss)))
+        (flet ((run (o)
+                 (if input
+                     (with-open-file (in input :external-format :utf-8)
+                       (process in o texts capms))
+                     (process *standard-input* o texts capms))))
+          (handler-case
+              (if output
+                  (with-open-file (o output :direction :output
+                                            :if-exists :supersede :if-does-not-exist :create
+                                            :external-format :utf-8)
+                    (run o))
+                  (run *standard-output*))
+            (sb-int:broken-pipe ()
+              (sb-ext:exit :code 0 :abort t))))))))

@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/ss2finalpng.ros -i %S/fixtures/wavlist-n1.ss -c %S/fixtures/caption-2.ss orig/frame.{%03i}.png final/frame.{%03i}.png > %t
+# RUN: diff %S/expected/02-extra-frame.txt %t
