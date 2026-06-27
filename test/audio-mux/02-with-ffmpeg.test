@@ -1,0 +1,7 @@
+# REQUIRES: ffmpeg
+# REQUIRES: ffprobe
+# RUN: mkdir -p %T/orig
+# RUN: python3 -c "import wave; f=wave.open('%T/orig/output.001.wav','w'); f.setnchannels(1); f.setsampwidth(2); f.setframerate(24000); f.writeframes(b'\x00\x00'*14400); f.close()"
+# RUN: ffmpeg -y -f lavfi -i color=c=black:size=640x480:d=2:r=1 -c:v libx264 %T/video.mp4 -loglevel error
+# RUN: env VIDEO=%T/video.mp4 OUT=%T/out.mp4 WAVLISTSS=%S/fixtures/single-entry.wavlist.ss ORIG_WAV_DIR=%T/orig FINAL_WAV_DIR=%T/final HEAD_MS=50 FRAME_MS=800 sh %S/../../bin/final_audio_mux.sh
+# RUN: ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 %T/out.mp4 | grep -q "codec_name=aac"

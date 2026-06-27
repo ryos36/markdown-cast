@@ -1,0 +1,4 @@
+# RUN: mkdir -p %T/wav
+# RUN: python3 -c "import wave; f=wave.open('%T/wav/in.wav','w'); f.setnchannels(1); f.setsampwidth(2); f.setframerate(24000); f.writeframes(b'\x00\x00'*24000); f.close()"
+# RUN: sox %T/wav/in.wav %T/wav/out.wav tempo 1.25
+# RUN: python3 -c "import subprocess; d=float(subprocess.check_output(['sox','--i','-D','%T/wav/out.wav']).strip()); assert abs(d-0.8)<0.05, f'expected ~0.8s, got {d}s'"
