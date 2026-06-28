@@ -1,6 +1,6 @@
 # TODO
 
-## 字幕から句読点（。、）を削除する
+## 句読点（。、）を字幕から削除する（最優先）
 
 字幕の本文から句読点を消したい。
 
@@ -22,4 +22,28 @@ Azure TTS にテキストとして「。」「、」を渡すと、SSML の `bre
 - 句読点を消したときの `ms` / `factor` / フレーム数の変化を before/after で比べる。
 - 文（読み上げ単位）の切れ目は句読点で決めているので、**区切り判定は今のまま残し、出力テキストからだけ
   句読点を除く**形にする（区切りロジックを壊さない）。
-</content>
+
+---
+
+## gstreamer のフォント依存（テストの抜け）
+
+`fonts-noto-cjk`（Noto Sans CJK JP）がないと textoverlay が文字化けまたはクラッシュする。  
+`test/video/01-gstreamer-mp4.test` は `REQUIRES: gst-launch-1.0` のみで、フォントの有無を確認していない。  
+フォントがない環境で文字化けしたまま PASS する可能性がある。
+
+対応案: `lit.cfg.py` でフォントファイルの存在チェックを追加し、`fonts-noto-cjk` を feature 登録する。
+
+---
+
+## capms の一貫性
+
+`capms=800` を複数箇所（`caption2srt`・`tts2wavlist`・`final_audio_mux`・gstreamer の `framerate`）に
+個別に渡している。どれか一つ変え忘れると動画と音声がずれる。  
+`build.ninja` で変数化することで解決できる。
+
+---
+
+## tts2wav テストが dry-run のみ
+
+`tts2wav` テストは `--dry-run` のみで、実際の Azure 通信はテストしていない。  
+Azure 側の音声モデル更新などは検知できない。現状は許容する（課金が発生するため）。
