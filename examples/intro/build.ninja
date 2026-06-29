@@ -1,0 +1,109 @@
+# ---- パラメータ ----
+bin     = ../../bin
+capms   = 800
+head_ms = 50
+tail_ms = 10
+threshold = 1.3
+max_chars = 10
+break_ms  = 120
+end_ms    = 0
+
+# Azure TTS の設定（ninja wav を使うときだけ必要）
+# key    = $AZURE_KEY
+# region = japaneast
+# voice  = ja-JP-NanamiNeural
+
+# ---- ルール ----
+rule note2ss
+  command = awk -f $bin/note2ss.awk deck.md > $out
+
+rule bunsetu
+  command = ros $bin/mapcar.ros $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
+
+rule caption
+  command = ros $bin/bunsetu2caption.ros --max-chars $max_chars -i $in -o $out
+
+rule srt
+  command = ros $bin/caption2srt.ros --ms $capms -i $in -o $out
+
+rule marp_png
+  command = mkdir -p _build/orig-png && npx --yes @marp-team/marp-cli@latest deck.md --images png --allow-local-files -o _build/orig-png/slide.png
+
+rule pnglist
+  command = ros $bin/caption2pnglist.ros -i $in '_build/orig-png/slide.{%03i}.png' '_build/new-png/frame.{%03j}.png' > $out
+
+rule frame_link
+  command = mkdir -p _build/new-png && xargs -n 2 ln -f < $in
+
+rule gst_caption
+  command = gst-launch-1.0 multifilesrc location="_build/new-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
+
+rule tts_list
+  command = ros $bin/bunsetu2tts.ros -i $in -o $out
+
+rule tts_wav
+  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice -i $in -o _build/orig-wav/output.{%03i}.wav
+
+rule wavlist
+  command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
+
+rule final_pnglist
+  command = ros $bin/ss2finalpng.ros -i _build/wavlist.ss -c _build/caption.ss '_build/new-png/frame.{%03i}.png' '_build/final-png/frame.{%03i}.png' > $out
+
+rule final_frame_link
+  command = mkdir -p _build/final-png && xargs -n 2 ln -f < $in
+
+rule final_srt
+  command = ros $bin/ss2finalsrt.ros -i _build/wavlist.ss --capms $capms _build/caption.ss -o $out
+
+rule gst_final
+  command = gst-launch-1.0 multifilesrc location="_build/final-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/final-subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
+
+rule final_audio_mux
+  command = VIDEO=_build/final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
+
+# ---- ビルドターゲット ----
+build _build/note.ss: note2ss deck.md
+
+build _build/bunsetu.ss: bunsetu _build/note.ss
+
+build _build/caption.ss: caption _build/bunsetu.ss
+
+build _build/subs.srt: srt _build/caption.ss
+
+build _build/orig-png/.done: marp_png deck.md
+
+build _build/pnglist.txt: pnglist _build/caption.ss
+
+build _build/new-png/.done: frame_link _build/pnglist.txt
+
+build _build/with-caption.mp4: gst_caption _build/new-png/.done _build/subs.srt
+
+build _build/tts.ss: tts_list _build/bunsetu.ss
+
+build _build/orig-wav/.done: tts_wav _build/tts.ss
+
+build _build/wavlist.ss: wavlist _build/tts.ss _build/orig-wav/.done
+
+build _build/final-pnglist.txt: final_pnglist _build/wavlist.ss _build/caption.ss
+
+build _build/final-png/.done: final_frame_link _build/final-pnglist.txt
+
+build _build/final-subs.srt: final_srt _build/wavlist.ss _build/caption.ss
+
+build _build/final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
+
+build _build/final-caption-audio.mp4: final_audio_mux _build/final-caption.mp4 _build/wavlist.ss
+
+# ---- 短縮ターゲット ----
+build pdf: phony
+  command = npx --yes @marp-team/marp-cli@latest deck.md -o _build/deck.pdf
+
+build png: phony _build/orig-png/.done
+build srt: phony _build/subs.srt
+build with-caption.mp4: phony _build/with-caption.mp4
+build wav: phony _build/orig-wav/.done
+build with-caption-audio.mp4: phony _build/with-caption-audio.mp4
+build final-caption-audio.mp4: phony _build/final-caption-audio.mp4
+
+default final-caption-audio.mp4
