@@ -1,24 +1,30 @@
-# ---- パラメータ ----
-bin     = ../../bin
-capms   = 800
-head_ms = 50
-tail_ms = 10
-threshold = 1.3
-max_chars = 10
-break_ms  = 120
-end_ms    = 0
-
-# Azure TTS の設定（ninja wav を使うときだけ必要）
-# key    = $AZURE_KEY
-# region = japaneast
-# voice  = ja-JP-NanamiNeural
+# rules.ninja — markdown-cast 共通ルール
+#
+# このファイルは各 build.ninja から include して使う。
+# include 元で以下の変数を定義してから include すること:
+#
+#   bin       markdown-cast/bin への相対パス（例: ../markdown-cast/bin）
+#   share     辞書ディレクトリへの相対パス（例: ../share または .）
+#   capms     1フレームの長さ ms（例: 800）
+#   head_ms   各文の頭の余白 ms（例: 50）
+#   tail_ms   各文の末尾の余白 ms（例: 10）
+#   threshold この倍速を超えるとフレームを追加（例: 1.3）
+#   max_chars 1 caption の最大文字数（例: 10）
+#   break_ms  文節間の SSML break ms（例: 120）
+#   end_ms    文末の SSML break ms（0 推奨）
+#
+# Azure TTS を使う場合は include 元でさらに:
+#   key       Azure Speech のサブスクリプションキー
+#   region    Azure リージョン（例: japaneast）
+#   voice     音声名（例: ja-JP-NanamiNeural）
 
 # ---- ルール ----
+
 rule note2ss
   command = awk -f $bin/note2ss.awk deck.md > $out
 
 rule bunsetu
-  command = ros $bin/mapcar.ros $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
+  command = ros $bin/mapcar.ros --no-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
 
 rule caption
   command = ros $bin/bunsetu2caption.ros --max-chars $max_chars -i $in -o $out
@@ -42,7 +48,7 @@ rule tts_list
   command = ros $bin/bunsetu2tts.ros -i $in -o $out
 
 rule tts_wav
-  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice -i $in -o _build/orig-wav/output.{%03i}.wav
+  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss -i $in -o _build/orig-wav/output.{%03i}.wav
 
 rule wavlist
   command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
@@ -105,5 +111,3 @@ build with-caption.mp4: phony _build/with-caption.mp4
 build wav: phony _build/orig-wav/.done
 build with-caption-audio.mp4: phony _build/with-caption-audio.mp4
 build final-caption-audio.mp4: phony _build/final-caption-audio.mp4
-
-default final-caption-audio.mp4

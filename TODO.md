@@ -43,6 +43,22 @@ Azure TTS にテキストとして「。」「、」を渡すと、SSML の `bre
 
 ---
 
+## mapcar の whitelist と --no-white-list
+
+`mapcar.ros` は `--dic` で辞書を渡すとき、デフォルトで辞書内容の sha256 を whitelist と照合して
+一致しなければエラー終了する（`mapcar.ros:289`、`check = (not no-white-list)`）。
+
+これは管理された固定パイプライン向けのセキュリティ機能で、ユーザーが自分の辞書を自由に編集して
+使う想定の `init.sh` 生成の足場では逆に邪魔になる（編集のたびにエラーになる）。
+
+**対応済み**: `share/rules.ninja` の `bunsetu` ルールには `--no-white-list` を付けてある。
+既存の `examples/rawls-san/build.ninja` 等（辞書なし、whitelist なし）は影響なし。
+
+将来、管理されたパイプライン（辞書を固定したい）を作るときは `--no-white-list` を外して
+whitelist ハッシュを管理する形に戻すとよい。
+
+---
+
 ## tts2wav テストが dry-run のみ
 
 `tts2wav` テストは `--dry-run` のみで、実際の Azure 通信はテストしていない。  

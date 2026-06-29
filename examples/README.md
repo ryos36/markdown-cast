@@ -1,6 +1,9 @@
 # examples
 
-markdown-cast のサンプル集。各ディレクトリに `deck.md` と `build.ninja` が入っている。
+markdown-cast の動かして見るサンプル集。各ディレクトリに `deck.md` と `build.ninja` が入っている。
+
+> 自分のプロジェクトを始めるときは `examples/` ではなく `bin/init.sh` を使う。
+> 詳しくはリポジトリ直下の README を参照。
 
 ## 使い方
 
@@ -16,6 +19,5 @@ Azure TTS を使う場合は `build.ninja` の `key` / `region` / `voice` を設
 
 | ディレクトリ | 内容 |
 |---|---|
-| `hello/` | 骨組みテンプレート。自分のデッキを作るときの出発点 |
 | `intro/` | markdown-cast の意義と使い方を説明するスライド |
 | `rawls-san/` | ロールズの「無知のヴェール」を題材にしたサンプル |
