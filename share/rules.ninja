@@ -24,7 +24,7 @@ rule note2ss
   command = awk -f $bin/note2ss.awk deck.md > $out
 
 rule bunsetu
-  command = ros $bin/mapcar.ros --no-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
+  command = ros $bin/mapcar.ros --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
 
 rule caption
   command = ros $bin/bunsetu2caption.ros --max-chars $max_chars -i $in -o $out

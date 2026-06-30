@@ -43,18 +43,27 @@ Azure TTS にテキストとして「。」「、」を渡すと、SSML の `bre
 
 ---
 
-## mapcar の whitelist と --no-white-list
+## mapcar の whitelist の設計メモ
 
-`mapcar.ros` は `--dic` で辞書を渡すとき、デフォルトで辞書内容の sha256 を whitelist と照合して
-一致しなければエラー終了する（`mapcar.ros:289`、`check = (not no-white-list)`）。
+`mapcar.ros` の whitelist 照合は 2 つの対象を持つ:
 
-これは管理された固定パイプライン向けのセキュリティ機能で、ユーザーが自分の辞書を自由に編集して
-使う想定の `init.sh` 生成の足場では逆に邪魔になる（編集のたびにエラーになる）。
+- **フィルタ**（`filter-function`）— `--info` を `eval` する = 任意コード実行。
+  ファイル削除・通信なども可能。whitelist は**本物のセキュリティ機構**。
+- **辞書**（`load-dic-checked`）— `*read-eval* nil` で `read` する = データのみ。
+  リスクはクラッシュ（循環リスト等）や予期しない変換程度。**データ完全性チェックに近い**。
 
-**対応済み**: `share/rules.ninja` の `bunsetu` ルールには `--no-white-list` を付けてある。
-既存の `examples/rawls-san/build.ninja` 等（辞書なし、whitelist なし）は影響なし。
+この 2 つを分けて制御するため、オプションを 2 本用意してある:
 
-将来、管理されたパイプライン（辞書を固定したい）を作るときは `--no-white-list` を外して
+| オプション | 効果 |
+|---|---|
+| `--no-white-list` | フィルタと辞書の両方を無効化 |
+| `--no-dic-white-list` | 辞書の照合だけを無効化。フィルタ保護は残る |
+
+**`share/rules.ninja` は `--no-dic-white-list` を使用**。
+ユーザーが `mecab-private.dict.ss` を自由に編集できる一方、
+フィルタ（note2word / word2word / word2bunsetu）の照合は維持される。
+
+管理されたパイプライン（辞書を固定したい）を作るときはフラグを外して
 whitelist ハッシュを管理する形に戻すとよい。
 
 ---
