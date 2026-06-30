@@ -3,6 +3,7 @@
 # このファイルは各 build.ninja から include して使う。
 # include 元で以下の変数を定義してから include すること:
 #
+#   deck      出力ファイルのベース名（例: slide0, my-talk）
 #   bin       markdown-cast/bin への相対パス（例: ../markdown-cast/bin）
 #   share     辞書ディレクトリへの相対パス（例: ../share または .）
 #   capms     1フレームの長さ ms（例: 800）
@@ -13,7 +14,7 @@
 #   break_ms  文節間の SSML break ms（例: 120）
 #   end_ms    文末の SSML break ms（0 推奨）
 #
-# Azure TTS を使う場合は include 元でさらに:
+# Azure TTS を使う場合は include 元でさらに（→ azure.md 参照）:
 #   key       Azure Speech のサブスクリプションキー
 #   region    Azure リージョン（例: japaneast）
 #   voice     音声名（例: ja-JP-NanamiNeural）
@@ -27,10 +28,10 @@ rule bunsetu
   command = ros $bin/mapcar.ros --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
 
 rule caption
-  command = ros $bin/bunsetu2caption.ros --max-chars $max_chars -i $in -o $out
+  command = ros $bin/bunsetu2caption.ros --max-chars $max_chars $in -o $out
 
 rule srt
-  command = ros $bin/caption2srt.ros --ms $capms -i $in -o $out
+  command = ros $bin/caption2srt.ros --ms $capms $in -o $out
 
 rule marp_png
   command = mkdir -p _build/orig-png && npx --yes @marp-team/marp-cli@latest deck.md --images png --allow-local-files -o _build/orig-png/slide.png
@@ -66,7 +67,7 @@ rule gst_final
   command = gst-launch-1.0 multifilesrc location="_build/final-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/final-subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
 
 rule final_audio_mux
-  command = VIDEO=_build/final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
+  command = VIDEO=_build/${deck}-final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
 
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
@@ -83,7 +84,7 @@ build _build/pnglist.txt: pnglist _build/caption.ss
 
 build _build/new-png/.done: frame_link _build/pnglist.txt
 
-build _build/with-caption.mp4: gst_caption _build/new-png/.done _build/subs.srt
+build _build/${deck}-with-caption.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
 build _build/tts.ss: tts_list _build/bunsetu.ss
 
@@ -97,17 +98,17 @@ build _build/final-png/.done: final_frame_link _build/final-pnglist.txt
 
 build _build/final-subs.srt: final_srt _build/wavlist.ss _build/caption.ss
 
-build _build/final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
+build _build/${deck}-final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
 
-build _build/final-caption-audio.mp4: final_audio_mux _build/final-caption.mp4 _build/wavlist.ss
+build _build/${deck}-final-caption-audio.mp4: final_audio_mux _build/${deck}-final-caption.mp4 _build/wavlist.ss
 
 # ---- 短縮ターゲット ----
 build pdf: phony
-  command = npx --yes @marp-team/marp-cli@latest deck.md -o _build/deck.pdf
+  command = npx --yes @marp-team/marp-cli@latest deck.md -o _build/${deck}.pdf
 
 build png: phony _build/orig-png/.done
 build srt: phony _build/subs.srt
-build with-caption.mp4: phony _build/with-caption.mp4
+build with-caption.mp4: phony _build/${deck}-with-caption.mp4
 build wav: phony _build/orig-wav/.done
-build with-caption-audio.mp4: phony _build/with-caption-audio.mp4
-build final-caption-audio.mp4: phony _build/final-caption-audio.mp4
+build with-caption-audio.mp4: phony _build/${deck}-with-caption-audio.mp4
+build final-caption-audio.mp4: phony _build/${deck}-final-caption-audio.mp4

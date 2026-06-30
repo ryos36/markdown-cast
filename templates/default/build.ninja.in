@@ -1,4 +1,5 @@
 # ---- パラメータ ----
+deck  = @DECK@
 bin   = @BIN@
 share = @SHARE@
 
@@ -11,10 +12,11 @@ break_ms  = 120
 end_ms    = 0
 
 # Azure TTS の設定（ninja wav を使うときだけ必要）
-# key    = $AZURE_KEY
+# 詳しくは azure.md を参照。キーはコミットしないこと。
+# key    = YOUR_AZURE_KEY
 # region = japaneast
 # voice  = ja-JP-NanamiNeural
 
 include @RULES@
 
-default final-caption-audio.mp4
+default with-caption.mp4

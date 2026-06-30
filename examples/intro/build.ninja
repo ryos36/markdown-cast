@@ -1,4 +1,5 @@
 # ---- パラメータ ----
+deck  = intro
 bin   = ../../bin
 share = .
 

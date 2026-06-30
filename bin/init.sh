@@ -46,6 +46,7 @@ if [ -z "$NAME" ]; then
     SHARE="."
     RULES="$SUBMOD/share/rules.ninja"
     DICT_DIR="."
+    DECK=$(basename "$(pwd)")
 else
     # 複数（サブディレクトリ）
     DESTDIR="$NAME"
@@ -53,6 +54,7 @@ else
     SHARE="../share"
     RULES="../$SUBMOD/share/rules.ninja"
     DICT_DIR="share"
+    DECK="$NAME"
 fi
 
 # ---- 辞書を配置 ----
@@ -83,6 +85,7 @@ else
     sed -e "s|@BIN@|$BIN|g" \
         -e "s|@SHARE@|$SHARE|g" \
         -e "s|@RULES@|$RULES|g" \
+        -e "s|@DECK@|$DECK|g" \
         "$TMPL/build.ninja.in" > "$NINJA_DST"
     echo "  [create]  $NINJA_DST"
 fi
@@ -98,11 +101,21 @@ if [ -n "$NAME" ]; then
     echo ""
     echo "  次のステップ:"
     echo "    cd $NAME"
-    echo "    ninja with-caption.mp4        # 字幕つき動画（Azure 不要）"
-    echo "    ninja final-caption-audio.mp4 # 音声つき最終動画（Azure 必要: build.ninja の key/region/voice を設定）"
+    echo "    \$EDITOR deck.md              # 発話ノートを <!-- --> で書く"
+    echo "    ninja                         # 字幕つき動画 ${DECK}-with-caption.mp4 を生成（Azure 不要）"
+    echo ""
+    echo "  音声つき動画を作る場合（Azure TTS が必要）:"
+    echo "    build.ninja の key / region / voice を設定してから:"
+    echo "    ninja final-caption-audio.mp4 # ${DECK}-final-caption-audio.mp4 を生成"
+    echo "    → 詳細は $SUBMOD/azure.md を参照"
 else
     echo ""
     echo "  次のステップ:"
-    echo "    ninja with-caption.mp4        # 字幕つき動画（Azure 不要）"
-    echo "    ninja final-caption-audio.mp4 # 音声つき最終動画（Azure 必要: build.ninja の key/region/voice を設定）"
+    echo "    \$EDITOR deck.md              # 発話ノートを <!-- --> で書く"
+    echo "    ninja                         # 字幕つき動画 ${DECK}-with-caption.mp4 を生成（Azure 不要）"
+    echo ""
+    echo "  音声つき動画を作る場合（Azure TTS が必要）:"
+    echo "    build.ninja の key / region / voice を設定してから:"
+    echo "    ninja final-caption-audio.mp4 # ${DECK}-final-caption-audio.mp4 を生成"
+    echo "    → 詳細は $SUBMOD/azure.md を参照"
 fi

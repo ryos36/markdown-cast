@@ -59,14 +59,14 @@ lambda として組み立て、--info でそのテキストを出力する(mapca
     (terpri out)))
 
 (defun process (in out n)
-  "IN からスライドを 1 つずつ読み、caption 化した S 式を OUT に書く。"
+  "IN からデッキ(スライドのリスト)を読み、各スライドを caption 化して OUT に書く。"
   (let ((fn (coerce (caption-lambda n) 'function))
         (*print-pretty* nil)
         (*print-case* :downcase))
-    (loop for form = (read in nil :eof)
-          until (eq form :eof)
-          do (prin1 (funcall fn form) out)
-             (terpri out))))
+    (let ((deck (read in nil :eof)))
+      (unless (eq deck :eof)
+        (prin1 (mapcar fn deck) out)
+        (terpri out)))))
 
 ;; --- adopt によるコマンドライン定義 ---
 
@@ -84,6 +84,7 @@ lambda として組み立て、--info でそのテキストを出力する(mapca
                      :reduce #'adopt:last))
 
 (defparameter *o-output*
+  ;; 入力は位置引数 [IN]。-i は持たない（mapcar が外側のデッキ階層を回すため不要）。
   (adopt:make-option 'output
                      :long "output" :short #\o
                      :parameter "FILE"

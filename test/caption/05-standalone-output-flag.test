@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/bunsetu2caption.ros %S/fixtures/01-basic.bunsetu.ss -o %t
+# RUN: diff %S/expected/01-basic.ss %t

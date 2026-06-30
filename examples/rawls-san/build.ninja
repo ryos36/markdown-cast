@@ -1,4 +1,5 @@
 # ---- パラメータ ----
+deck  = rawls-san
 bin   = ../../bin
 share = .
 
