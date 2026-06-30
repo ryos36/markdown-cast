@@ -16,6 +16,6 @@ def has_tool(name):
     except subprocess.CalledProcessError:
         return False
 
-for tool in ['npx', 'gst-launch-1.0', 'ffprobe', 'sox', 'ffmpeg']:
+for tool in ['npx', 'gst-launch-1.0', 'ffprobe', 'sox', 'ffmpeg', 'ninja']:
     if has_tool(tool):
         config.available_features.add(tool)
