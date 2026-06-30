@@ -1,7 +1,8 @@
 # REQUIRES: ninja, npx, gst-launch-1.0
-# RUN: mkdir -p %T/root
+# RUN: rm -rf %T/root && mkdir -p %T/root
 # RUN: ln -sfn %S/../.. %T/root/markdown-cast
 # RUN: cd %T/root && sh markdown-cast/bin/init.sh myslide
 # RUN: cp %S/fixtures/deck.md %T/root/myslide/deck.md
-# RUN: ninja -C %T/root/myslide -j1 with-caption.mp4
-# RUN: test -f %T/root/myslide/_build/myslide-with-caption.mp4
+# RUN: ninja -C %T/root/myslide -j1 video pdf
+# RUN: test -f %T/root/myslide/_build/myslide.mp4
+# RUN: test -f %T/root/myslide/_build/myslide.pdf

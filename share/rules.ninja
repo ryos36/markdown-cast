@@ -66,8 +66,11 @@ rule final_srt
 rule gst_final
   command = gst-launch-1.0 multifilesrc location="_build/final-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/final-subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
 
+rule marp_pdf
+  command = mkdir -p _build && npx --yes @marp-team/marp-cli@latest deck.md --allow-local-files -o _build/${deck}.pdf
+
 rule final_audio_mux
-  command = VIDEO=_build/${deck}-final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
+  command = VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
 
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
@@ -84,7 +87,8 @@ build _build/pnglist.txt: pnglist _build/caption.ss
 
 build _build/new-png/.done: frame_link _build/pnglist.txt | _build/orig-png/.done
 
-build _build/${deck}-with-caption.mp4: gst_caption _build/new-png/.done _build/subs.srt
+# 字幕つき動画（音声なし）= デフォルト成果物
+build _build/${deck}.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
 build _build/tts.ss: tts_list _build/bunsetu.ss
 
@@ -98,17 +102,19 @@ build _build/final-png/.done: final_frame_link _build/final-pnglist.txt
 
 build _build/final-subs.srt: final_srt _build/wavlist.ss _build/caption.ss
 
-build _build/${deck}-final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
+# 中間: 通し番号振り直し済み・音声なし
+build _build/_final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
 
-build _build/${deck}-final-caption-audio.mp4: final_audio_mux _build/${deck}-final-caption.mp4 _build/wavlist.ss
+# 字幕＋音声つき動画 = 最終成果物（Azure 必要）
+build _build/${deck}-audio.mp4: final_audio_mux _build/_final-caption.mp4 _build/wavlist.ss
+
+# ---- ビルド: PDF ----
+build _build/${deck}.pdf: marp_pdf deck.md
 
 # ---- 短縮ターゲット ----
-build pdf: phony
-  command = npx --yes @marp-team/marp-cli@latest deck.md -o _build/${deck}.pdf
-
+build pdf: phony _build/${deck}.pdf
 build png: phony _build/orig-png/.done
 build srt: phony _build/subs.srt
-build with-caption.mp4: phony _build/${deck}-with-caption.mp4
+build video: phony _build/${deck}.mp4
 build wav: phony _build/orig-wav/.done
-build with-caption-audio.mp4: phony _build/${deck}-with-caption-audio.mp4
-build final-caption-audio.mp4: phony _build/${deck}-final-caption-audio.mp4
+build video-audio: phony _build/${deck}-audio.mp4
