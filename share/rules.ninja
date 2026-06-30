@@ -34,7 +34,7 @@ rule srt
   command = ros $bin/caption2srt.ros --ms $capms $in -o $out
 
 rule marp_png
-  command = mkdir -p _build/orig-png && npx --yes @marp-team/marp-cli@latest deck.md --images png --allow-local-files -o _build/orig-png/slide.png
+  command = mkdir -p _build/orig-png && npx --yes @marp-team/marp-cli@latest deck.md --images png --allow-local-files -o _build/orig-png/slide.png && touch $out
 
 rule pnglist
   command = ros $bin/caption2pnglist.ros -i $in '_build/orig-png/slide.{%03i}.png' '_build/new-png/frame.{%03j}.png' > $out
@@ -82,7 +82,7 @@ build _build/orig-png/.done: marp_png deck.md
 
 build _build/pnglist.txt: pnglist _build/caption.ss
 
-build _build/new-png/.done: frame_link _build/pnglist.txt
+build _build/new-png/.done: frame_link _build/pnglist.txt | _build/orig-png/.done
 
 build _build/${deck}-with-caption.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
