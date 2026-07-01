@@ -3,11 +3,11 @@
 ;; mecab が分割してしまう語をここに追加して 1 語に畳む。
 ;; 字幕と TTS の両方に効く。
 ;;
-;; 書き方: ("語")  または ("語" "別語" ...)  ← 語のリスト
+;; 書き方: (("語1") ("語2") ...)
 ;;
 ;; 例:
-;;   ("micro:bit")
-;;   ("Switch Science")
-;;   ("Raspberry Pi")
+;;   (("micro:bit")
+;;    ("Switch Science")
+;;    ("Raspberry Pi"))
 
 ()

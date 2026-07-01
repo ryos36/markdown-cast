@@ -26,7 +26,7 @@ rule note2ss
   command = awk -f $bin/note2ss.awk deck.md > $out
 
 rule bunsetu
-  command = ros $bin/mapcar.ros --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $in -o $out
+  command = ros $bin/mapcar.ros --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
 
 rule caption
   command = ros $bin/bunsetu2caption.ros --max-chars $max_chars $in -o $out
@@ -50,7 +50,7 @@ rule tts_list
   command = ros $bin/bunsetu2tts.ros -i $in -o $out
 
 rule tts_wav
-  command = mkdir -p _build/orig-wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt --name '_build/orig-wav/output.{%03i}.wav' -i $in > $out
+  command = mkdir -p _build/orig-wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt --name '_build/orig-wav/output.{%03i}.wav' -i $src > $out
 
 rule wavlist
   command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
@@ -76,7 +76,8 @@ rule final_audio_mux
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
 
-build _build/bunsetu.ss: bunsetu _build/note.ss
+build _build/bunsetu.ss: bunsetu _build/note.ss $share/mecab-private.dict.ss
+  src = _build/note.ss
 
 build _build/caption.ss: caption _build/bunsetu.ss
 
@@ -93,7 +94,8 @@ build _build/${deck}.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
 build _build/tts.ss: tts_list _build/bunsetu.ss
 
-build _build/tts.result.ss: tts_wav _build/tts.ss
+build _build/tts.result.ss: tts_wav _build/tts.ss $share/pronunciation.dict.ss
+  src = _build/tts.ss
 
 build _build/wavlist.ss: wavlist _build/tts.ss _build/tts.result.ss
 
