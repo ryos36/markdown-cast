@@ -28,4 +28,4 @@ include key.ninja
 
 include @RULES@
 
-default video pdf
+default video-audio video
