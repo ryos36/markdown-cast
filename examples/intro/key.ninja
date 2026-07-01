@@ -1,10 +1,10 @@
-# Azure TTS の設定（ninja wav / video-audio に必要）
+# Azure TTS の設定（ninja video-audio に必要）
 # 詳しくは azure.md を参照。このファイルは git にコミットしないこと。
-# key    = YOUR_AZURE_KEY
-# region = japaneast
-# voice  = ja-JP-NanamiNeural
+# 実際のキーに書き換えること。
+key    = YOUR_AZURE_KEY
+region = japaneast
+voice  = ja-JP-NanamiNeural
 
-# Azure を使わず wav の長さだけ見積もる dry-run モード（Azure 不要、key 不要）。
-# 使いたいときは↓のコメントを外す。
-# tts_opt = --dry-run
-tts_opt =
+# dry-run: パイプラインの流れを確認するモード。
+# 実際に音声を作るときは↓をコメントアウトして上の key を設定する。
+tts_opt = --dry-run

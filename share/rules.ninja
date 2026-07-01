@@ -50,7 +50,7 @@ rule tts_list
   command = ros $bin/bunsetu2tts.ros -i $in -o $out
 
 rule tts_wav
-  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt -i $in -o _build/orig-wav/output.{%03i}.wav
+  command = mkdir -p _build/orig-wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt --name '_build/orig-wav/output.{%03i}.wav' -i $in > $out
 
 rule wavlist
   command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
@@ -93,9 +93,9 @@ build _build/${deck}.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
 build _build/tts.ss: tts_list _build/bunsetu.ss
 
-build _build/orig-wav/.done: tts_wav _build/tts.ss
+build _build/tts.result.ss: tts_wav _build/tts.ss
 
-build _build/wavlist.ss: wavlist _build/tts.ss _build/orig-wav/.done
+build _build/wavlist.ss: wavlist _build/tts.ss _build/tts.result.ss
 
 build _build/final-pnglist.txt: final_pnglist _build/wavlist.ss _build/caption.ss
 
@@ -117,5 +117,5 @@ build pdf: phony _build/${deck}.pdf
 build png: phony _build/orig-png/.done
 build srt: phony _build/subs.srt
 build video: phony _build/${deck}.mp4
-build wav: phony _build/orig-wav/.done
+build wav: phony _build/tts.result.ss
 build video-audio: phony _build/${deck}-audio.mp4

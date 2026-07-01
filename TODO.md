@@ -68,6 +68,13 @@ whitelist ハッシュを管理する形に戻すとよい。
 
 ---
 
+## key.ninja の dry-run 説明文が誤り
+
+`key.ninja` のコメント「Azure を使わず wav の長さだけ見積もる dry-run モード」は誤った解釈。
+正しい説明に直す。
+
+---
+
 ## tts2wav テストが dry-run のみ
 
 `tts2wav` テストは `--dry-run` のみで、実際の Azure 通信はテストしていない。  
