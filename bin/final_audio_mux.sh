@@ -17,6 +17,7 @@
 #   FRAME_MS      1 コマの長さ ms(既定 800。capms と一致)
 #   ORIG_WAV_DIR  元 wav のディレクトリ(既定: _build/orig-wav)
 #   FINAL_WAV_DIR tempo 変換後 wav の出力先(既定: _build/final-wav)
+#   PRESET_WAV    wavlist が空のとき先頭に差し込む wav(既定: なし → エラー)
 #   DRY=1         ffmpeg を実行せず組み立てたコマンドを表示するだけ
 set -eu
 
@@ -64,8 +65,15 @@ while read -r a rate running; do
 done < "${LIST}"
 n=$(( i - 1 ))
 if [ "${n}" -lt 1 ]; then
-    echo "final_audio_mux: ${WAVLISTSS} に wav がありません" >&2
-    exit 1
+    if [ -z "${PRESET_WAV:-}" ]; then
+        echo "final_audio_mux: ${WAVLISTSS} に wav がありません" >&2
+        exit 1
+    fi
+    echo "  wav なし: ${PRESET_WAV} をプリセットとして使用" >&2
+    set -- "$@" -i "${PRESET_WAV}"
+    filter="[1:a]adelay=0|0[a1];"
+    labels="[a1]"
+    n=1
 fi
 
 set -- "$@" -filter_complex "${filter}${labels}amix=inputs=${n}:duration=longest:normalize=0[aout]" \

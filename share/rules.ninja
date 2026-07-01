@@ -41,7 +41,7 @@ rule pnglist
   command = ros $bin/caption2pnglist.ros -i $in '_build/orig-png/slide.{%03i}.png' '_build/new-png/frame.{%03j}.png' > $out
 
 rule frame_link
-  command = mkdir -p _build/new-png && xargs -n 2 ln -f < $in
+  command = mkdir -p _build/new-png && xargs -n 2 ln -f < $in && touch $out
 
 rule gst_caption
   command = gst-launch-1.0 multifilesrc location="_build/new-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
@@ -59,7 +59,7 @@ rule final_pnglist
   command = ros $bin/ss2finalpng.ros -i _build/wavlist.ss -c _build/caption.ss '_build/new-png/frame.{%03i}.png' '_build/final-png/frame.{%03i}.png' > $out
 
 rule final_frame_link
-  command = mkdir -p _build/final-png && xargs -n 2 ln -f < $in
+  command = mkdir -p _build/final-png && xargs -n 2 ln -f < $in && touch $out
 
 rule final_srt
   command = ros $bin/ss2finalsrt.ros -i _build/wavlist.ss --capms $capms _build/caption.ss -o $out
@@ -71,7 +71,7 @@ rule marp_pdf
   command = mkdir -p _build && npx --yes @marp-team/marp-cli@latest deck.md --allow-local-files -o _build/${deck}.pdf
 
 rule final_audio_mux
-  command = VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms sh $bin/final_audio_mux.sh
+  command = VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms PRESET_WAV=$bin/../share/preset-silence.wav sh $bin/final_audio_mux.sh
 
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
@@ -99,7 +99,7 @@ build _build/wavlist.ss: wavlist _build/tts.ss _build/tts.result.ss
 
 build _build/final-pnglist.txt: final_pnglist _build/wavlist.ss _build/caption.ss
 
-build _build/final-png/.done: final_frame_link _build/final-pnglist.txt
+build _build/final-png/.done: final_frame_link _build/final-pnglist.txt | _build/new-png/.done
 
 build _build/final-subs.srt: final_srt _build/wavlist.ss _build/caption.ss
 
