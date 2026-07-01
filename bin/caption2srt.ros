@@ -6,7 +6,7 @@ exec ros -Q -- $0 "$@"
 #|
 caption2srt.ros -- caption の入れ子構造を平坦化して SRT 字幕を出力する。
 
-入力は caption を含む S 式(デッキ→スライド→文→caption→文節 等の入れ子)。
+入力は caption を含む S 式(デッキ/スライド/文/caption/文節 等の入れ子)。
 「文字列だけからなるリスト」を 1 caption とみなし、出現順に全部集める。
 各 caption は文節を連結した 1 行のテキストになる。
 

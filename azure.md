@@ -8,7 +8,7 @@
 ## 準備
 
 1. [Azure ポータル](https://portal.azure.com/) でサブスクリプションを作成する
-2. **Cognitive Services → Speech** リソースを作成する
+2. **Cognitive Services / Speech** リソースを作成する
 3. リソースの「キーとエンドポイント」から **キー1**（または キー2）と **場所/リージョン** を控える
 
 ---

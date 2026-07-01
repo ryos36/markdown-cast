@@ -8,9 +8,9 @@
 deck.md --(note2ss.awk)--> note.ss          # 発話ノートを S 式リストに
 ```
 
-## 2. テキスト解析（形態素 → 文節）
+## 2. テキスト解析（形態素解析・文節化）
 ```
-note.ss --(mapcar: note2word → word2word → word2bunsetu)--> 文節構造
+note.ss --(mapcar: note2word, word2word, word2bunsetu)--> 文節構造
   note2word   mecab で ((単語 . 品詞) …)
   word2word   複合語辞書で 1 語に畳む
   word2bunsetu 助詞・副詞・句読点で文節に区切る
@@ -63,11 +63,11 @@ final-caption.mp4 + wavlist.ss --(final_audio_mux)--> final-caption-audio.mp4
 ```
 ninja pdf                     # 1（PDF）
 ninja png                     # 4 のスライド PNG
-ninja srt                     # 1→2→3
-ninja with-caption.mp4        # 1→2→3→4
-ninja wav                     # 1→2→5（★Azure 課金）
-ninja with-caption-audio.mp4  # …→6→7
-ninja final-caption-audio.mp4 # …→8
+ninja srt                     # 1-2-3
+ninja with-caption.mp4        # 1-2-3-4
+ninja wav                     # 1-2-5（★Azure 課金）
+ninja with-caption-audio.mp4  # ...-6-7
+ninja final-caption-audio.mp4 # ...-8
 ```
 `ninja wav` 以外は Azure 不要。
 </content>

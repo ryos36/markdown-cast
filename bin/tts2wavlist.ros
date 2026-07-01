@@ -8,7 +8,7 @@ tts2wavlist.ros -- tts.ss((A 文 …) …) と「既存の orig-wav の実測再
 音声タイムラインの S 式 wavlist.ss を直接作る(+ 任意で 4 列の wavlist.txt も同時出力)。
 
 以前は wavlist.txt(orig new A factor)を出し、wavlist2ss が factor から ms を逆算して ss を
-再構築していた。それだと「ms を測る→factor に丸める→また ms に戻す」という無駄な往復になる。
+再構築していた。それだと「ms を測る、factor に丸める、また ms に戻す」という無駄な往復になる。
 ここでは tts.ss + sox 実測から wavlist.ss を一気に作る(ms は実測そのまま=精度が高い)。
 tts.result.ss(Azure 結果)に依存しない。wav さえあれば作れる。
 

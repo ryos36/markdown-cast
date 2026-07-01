@@ -19,7 +19,7 @@ check_tool() {
     if command -v "$1" > /dev/null 2>&1; then
         printf "  [OK]      %s\n" "$1"
     else
-        printf "  [MISSING] %s  → %s\n" "$1" "$2"
+        printf "  [MISSING] %s  -- %s\n" "$1" "$2"
         MISSING=1
     fi
 }
@@ -117,7 +117,7 @@ if [ -n "$NAME" ]; then
     echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
     echo ""
     echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    \$EDITOR key.ninja  # key / region / voice を設定（→ $SUBMOD/azure.md 参照）"
+    echo "    \$EDITOR key.ninja  # key / region / voice を設定（$SUBMOD/azure.md 参照）"
     echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
 else
     echo ""
@@ -126,6 +126,6 @@ else
     echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
     echo ""
     echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    \$EDITOR key.ninja  # key / region / voice を設定（→ $SUBMOD/azure.md 参照）"
+    echo "    \$EDITOR key.ninja  # key / region / voice を設定（$SUBMOD/azure.md 参照）"
     echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
 fi

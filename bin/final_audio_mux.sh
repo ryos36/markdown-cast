@@ -17,7 +17,7 @@
 #   FRAME_MS      1 コマの長さ ms(既定 800。capms と一致)
 #   ORIG_WAV_DIR  元 wav のディレクトリ(既定: _build/orig-wav)
 #   FINAL_WAV_DIR tempo 変換後 wav の出力先(既定: _build/final-wav)
-#   PRESET_WAV    wavlist が空のとき先頭に差し込む wav(既定: なし → エラー)
+#   PRESET_WAV    wavlist が空のとき先頭に差し込む wav(既定: なし、未設定時はエラー)
 #   DRY=1         ffmpeg を実行せず組み立てたコマンドを表示するだけ
 set -eu
 
