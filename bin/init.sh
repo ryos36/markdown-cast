@@ -90,6 +90,18 @@ else
     echo "  [create]  $NINJA_DST"
 fi
 
+# ---- key.ninja を配置 ----
+copy_if_missing "$TMPL/key.ninja" "$DESTDIR/key.ninja"
+
+# ---- .gitignore に key.ninja を追加 ----
+GITIGNORE="$DESTDIR/.gitignore"
+if grep -qsF "key.ninja" "$GITIGNORE"; then
+    echo "  [skip]    $GITIGNORE（key.ninja 既存）"
+else
+    echo "key.ninja" >> "$GITIGNORE"
+    echo "  [update]  $GITIGNORE（key.ninja を追加）"
+fi
+
 # ---- deck.md を配置 ----
 DECK_DST="$DESTDIR/deck.md"
 copy_if_missing "$TMPL/deck.md" "$DECK_DST"
@@ -105,9 +117,8 @@ if [ -n "$NAME" ]; then
     echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
     echo ""
     echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    build.ninja の key / region / voice を設定してから:"
+    echo "    \$EDITOR key.ninja  # key / region / voice を設定（→ $SUBMOD/azure.md 参照）"
     echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
-    echo "    → 詳細は $SUBMOD/azure.md を参照"
 else
     echo ""
     echo "  次のステップ:"
@@ -115,7 +126,6 @@ else
     echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
     echo ""
     echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    build.ninja の key / region / voice を設定してから:"
+    echo "    \$EDITOR key.ninja  # key / region / voice を設定（→ $SUBMOD/azure.md 参照）"
     echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
-    echo "    → 詳細は $SUBMOD/azure.md を参照"
 fi

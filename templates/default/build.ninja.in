@@ -24,11 +24,7 @@ max_chars = 10
 break_ms  = 120
 end_ms    = 0
 
-# Azure TTS の設定（ninja wav / video-audio を使うときだけ必要）
-# 詳しくは azure.md を参照。キーはコミットしないこと。
-# key    = YOUR_AZURE_KEY
-# region = japaneast
-# voice  = ja-JP-NanamiNeural
+include key.ninja
 
 include @RULES@
 

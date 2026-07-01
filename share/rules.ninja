@@ -14,10 +14,11 @@
 #   break_ms  文節間の SSML break ms（例: 120）
 #   end_ms    文末の SSML break ms（0 推奨）
 #
-# Azure TTS を使う場合は include 元でさらに（→ azure.md 参照）:
+# Azure TTS を使う場合は key.ninja でさらに（→ azure.md 参照）:
 #   key       Azure Speech のサブスクリプションキー
 #   region    Azure リージョン（例: japaneast）
 #   voice     音声名（例: ja-JP-NanamiNeural）
+#   tts_opt   TTS オプション（例: --dry-run）通常は空
 
 # ---- ルール ----
 
@@ -49,7 +50,7 @@ rule tts_list
   command = ros $bin/bunsetu2tts.ros -i $in -o $out
 
 rule tts_wav
-  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss -i $in -o _build/orig-wav/output.{%03i}.wav
+  command = ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt -i $in -o _build/orig-wav/output.{%03i}.wav
 
 rule wavlist
   command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
