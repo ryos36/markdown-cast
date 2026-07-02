@@ -1,4 +1,4 @@
-# markdown-cast
+# markdown-cast  Ver 1.00
 
 Marp のスライドから、字幕・音声つき動画を作るツールです。
 
@@ -37,16 +37,16 @@ git を使わない場合は、GitHub からダウンロードしたファイル
 ### 2. 必要なファイルを生成する
 
 ```sh
-sh markdown-cast/bin/init.sh intro
+sh markdown-cast/bin/init.sh my-first-slide
 ```
 
 引数にディレクトリ名を渡します。このディレクトリ名が出力ファイル名になります。
 
 ```
-intro  →  _build/intro.mp4
+my-first-slide  →  _build/my-first-slide.mp4
 ```
 
-実行すると `intro/deck.md`・`intro/build.ninja`・`intro/key.ninja` と
+実行すると `my-first-slide/deck.md`・`my-first-slide/build.ninja`・`my-first-slide/key.ninja` と
 辞書テンプレート（`share/mecab-private.dict.ss` / `share/pronunciation.dict.ss`）が作られます。
 
 ディレクトリ名はスライドの内容に合った名前をつけることをお勧めします。
@@ -57,7 +57,7 @@ my-slides/
 ├── share/
 │   ├── mecab-private.dict.ss
 │   └── pronunciation.dict.ss
-└── intro/
+└── my-first-slide/
     ├── build.ninja
     ├── deck.md
     └── key.ninja
@@ -65,7 +65,7 @@ my-slides/
 
 ### 3. スライドと発話ノートを書く
 
-`intro/deck.md` を編集します。
+`my-first-slide/deck.md` を編集します。
 スライドの内容と、`<!-- -->` の中に話す内容（発話ノート）を書きます。
 
 ```markdown
@@ -81,17 +81,17 @@ my-slides/
 ### 4. 動画を作る
 
 ```sh
-cd intro
+cd my-first-slide
 ninja video    # 字幕つき動画（Azure 不要）
 ```
 
-`_build/intro.mp4` に字幕つきの動画ができます。
+`_build/my-first-slide.mp4` に字幕つきの動画ができます。
 
 ### 5. 動画を再生する
 
 ```sh
-ffplay _build/intro.mp4    # Linux
-open   _build/intro.mp4    # Mac
+ffplay _build/my-first-slide.mp4    # Linux
+open   _build/my-first-slide.mp4    # Mac
 ```
 
 ---
@@ -113,14 +113,6 @@ Azure TTS を使う場合は `key.ninja` に API キーを設定してから `ni
 
 Azure TTS での音声合成、limit / dry-run を使った効率的な進め方、
 文節・句読点・読みの調整など、詳しい使い方は [tutorial.md](tutorial.md) を参照してください。
-
----
-
-## powered by markdown-cast
-
-このツールを使って作った動画には、ぜひ紹介をつけてください。
-
-https://github.com/ryos36/markdown-cast
 
 ---
 
