@@ -13,6 +13,7 @@
 #   max_chars 1 caption の最大文字数（例: 10）
 #   break_ms  文節間の SSML break ms（例: 120）
 #   end_ms    文末の SSML break ms（0 推奨）
+#   strip_opt 句読点を落とすなら --strip-punctuation、残すなら空（strip_opt =）
 #
 # Azure TTS を使う場合は key.ninja でさらに（azure.md 参照）:
 #   key       Azure Speech のサブスクリプションキー
@@ -26,7 +27,7 @@ rule note2ss
   command = awk -f $bin/note2ss.awk deck.md > $out
 
 rule bunsetu
-  command = ros $bin/mapcar.ros --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
+  command = ros $bin/mapcar.ros $strip_opt --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
 
 rule caption
   command = ros $bin/bunsetu2caption.ros --max-chars $max_chars $in -o $out

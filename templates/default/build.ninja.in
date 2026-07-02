@@ -19,6 +19,9 @@ threshold = 1.3
 # 字幕 1 行の最大文字数。超えたら文節単位で折り返して次の caption にする。
 max_chars = 20
 
+# 字幕・音声から句読点（。、）を落とす。残したいときはこの行を空にする（strip_opt =）。
+strip_opt = --strip-punctuation
+
 # Azure TTS の SSML break(ミリ秒)。break_ms=文節間、end_ms=文末。
 # end_ms は 0 推奨: 末尾の間は tail_ms(mux 側)で持ち、wav 自体に無音を焼かない。
 break_ms  = 120

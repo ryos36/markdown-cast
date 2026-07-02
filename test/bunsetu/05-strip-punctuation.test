@@ -1,0 +1,2 @@
+# RUN: ros %S/../../bin/mapcar.ros --strip-punctuation -i %S/fixtures/02-punctuation.ss %S/../../bin/note2word.ros %S/../../bin/word2word.ros %S/../../bin/word2bunsetu.ros > %t
+# RUN: diff %S/expected/05-strip-punctuation.ss %t
