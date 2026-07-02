@@ -1,4 +1,7 @@
 _build/
 _DELETE/
 test/.lit_test_times.txt
+.ninja_log
 memo.txt
+podman/work/
+
