@@ -1,0 +1,40 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    git \
+    build-essential \
+    sbcl \
+    ninja-build \
+    mecab \
+    mecab-ipadic-utf8 \
+    libmecab-dev \
+    sox \
+    ffmpeg \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-x \
+    fonts-noto-cjk \
+    nodejs \
+    npm \
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+# Roswell（CI=true をスクリプト実行側に渡す）
+RUN curl -sL https://raw.githubusercontent.com/roswell/roswell/master/scripts/install-for-ci.sh > /tmp/roswell-install.sh \
+    && CI=true sh /tmp/roswell-install.sh \
+    && rm /tmp/roswell-install.sh
+ENV PATH="/usr/local/bin:/root/.roswell/bin:$PATH"
+
+# Quicklisp ライブラリ
+RUN ros install adopt && ros install dexador && ros install babel
+
+# marp CLI（システムの Chromium を使う）
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+RUN npm install -g @marp-team/marp-cli
+
+CMD ["bash"]
