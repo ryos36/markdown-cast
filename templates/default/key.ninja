@@ -9,6 +9,9 @@ voice  = ja-JP-NanamiNeural
 # 詳しくは README.md の「Azure 課金のガード」を参照。
 limit = 6
 
-# dry-run: パイプラインの流れを確認するモード。
-# 実際に音声を作るときは下の行をコメントアウトして上の key を設定する。
+# tts_opt: 音声合成のオプション。複数指定するときはスペースで並べる。
+#   --dry-run         実際に音声を作らずパイプラインの流れを確認する
+#   --pitch -10%      声の高さ（マイナスで低く、プラスで高く）
+#   --rate  -15%      速さ（マイナスでゆっくり、プラスで速く）
+#   --style cheerful  話し方スタイル（cheerful / calm など）
 tts_opt = --dry-run
