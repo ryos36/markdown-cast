@@ -39,7 +39,7 @@ git submodule add https://github.com/ryos36/markdown-cast
 
 ---
 ## 初期設定2. 足場を生成する
-sh markdown-cast/bin/init.sh 
+sh markdown-cast/bin/init.sh intro
 
 ---
 
@@ -156,10 +156,9 @@ Azure は毎月リミットがリセットされる（はず）
 なんとか ss で調整できる
 
 ---
-意図しない文節の区切り"
-なんとか ss の品詞で調節できる
-たぶん mecab の機能語とか福祉でくぎる
-Qaurk できるようにしてなかったかね？
+意図しない文節の区切り
+全角空白で手動区切りができる
+複合語は mecab-private.dict.ss に登録する（品詞指定は不可）
 
 ---
 意図しない文節の区切り
