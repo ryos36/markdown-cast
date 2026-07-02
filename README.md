@@ -15,7 +15,7 @@ Marp のスライドから、字幕・音声つき動画を作るツールです
 - **字幕つき動画** — Azure TTS なしで作れます
 - **音声つき動画** — Azure TTS を使います
 
-まず字幕つき動画で内容を確認し、準備ができたら音声つき動画を作る流れをお勧めします。
+まず字幕つき動画で内容を確認し、準備ができたら音声つき動画を作る流れが基本です。
 
 ---
 
@@ -49,7 +49,7 @@ my-first-slide  →  _build/my-first-slide.mp4
 実行すると `my-first-slide/deck.md`・`my-first-slide/build.ninja`・`my-first-slide/key.ninja` と
 辞書テンプレート（`share/mecab-private.dict.ss` / `share/pronunciation.dict.ss`）が作られます。
 
-ディレクトリ名はスライドの内容に合った名前をつけることをお勧めします。
+ディレクトリ名がそのまま出力ファイル名になるので、スライドの内容に合った名前をつけます。
 
 ```
 my-slides/
