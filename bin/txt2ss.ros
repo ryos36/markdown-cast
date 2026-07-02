@@ -1,0 +1,89 @@
+#!/bin/sh
+#|-*- mode:lisp -*-|#
+#|
+exec ros -Q -- $0 "$@"
+|#
+#|
+txt2ss.ros -- プレーンテキストを note.ss 形式(文字列のリスト)に変換する。
+
+1 行 = 1 発話として ("行1" "行2" ...) の S 式リストを出力する。
+空行はスキップする。
+
+出力は mapcar.ros への入力(note.ss)と同じ形式。
+
+使い方:
+  ros bin/txt2ss.ros [-i FILE] [-o FILE]
+|#
+
+(progn
+  (ros:ensure-asdf)
+  (ql:quickload :adopt :silent t))
+
+(defpackage :ros.script.txt2ss
+  (:use :cl))
+(in-package :ros.script.txt2ss)
+
+(defun process (in out)
+  "IN の各行を読み、空行をスキップして文字列リストを OUT に書く。"
+  (let ((lines '()))
+    (loop for line = (read-line in nil nil)
+          while line
+          do (let ((trimmed (string-trim '(#\Space #\Tab #\Return) line)))
+               (when (plusp (length trimmed))
+                 (push trimmed lines))))
+    (let ((*print-pretty* nil)
+          (*print-case* :downcase)
+          (*print-readably* t))
+      (prin1 (nreverse lines) out)
+      (terpri out))))
+
+;; --- adopt によるコマンドライン定義 ---
+
+(defparameter *o-help*
+  (adopt:make-option 'help
+                     :long "help" :short #\h
+                     :help "このヘルプを表示して終了する"
+                     :reduce (constantly t)))
+
+(defparameter *o-input*
+  (adopt:make-option 'input
+                     :long "input" :short #\i
+                     :parameter "FILE"
+                     :help "入力テキストファイル(既定: stdin)"
+                     :reduce #'adopt:last))
+
+(defparameter *o-output*
+  (adopt:make-option 'output
+                     :long "output" :short #\o
+                     :parameter "FILE"
+                     :help "出力ファイル(既定: stdout)"
+                     :reduce #'adopt:last))
+
+(defparameter *ui*
+  (adopt:make-interface
+   :name "txt2ss"
+   :summary "プレーンテキストを note.ss 形式(文字列リスト)に変換する"
+   :usage "[OPTIONS]"
+   :help "1 行 = 1 発話として (\"行1\" \"行2\" ...) を出力する。空行はスキップ。"
+   :contents (list *o-help* *o-input* *o-output*)))
+
+(defun main (&rest argv)
+  (multiple-value-bind (args opts) (adopt:parse-options-or-exit *ui* argv)
+    (declare (ignore args))
+    (when (gethash 'help opts)
+      (adopt:print-help-and-exit *ui*))
+    (let ((input  (gethash 'input opts))
+          (output (gethash 'output opts)))
+      (when (and input  (string= input  "-")) (setf input  nil))
+      (when (and output (string= output "-")) (setf output nil))
+      (flet ((run (out)
+               (if input
+                   (with-open-file (in input :external-format :utf-8)
+                     (process in out))
+                   (process *standard-input* out))))
+        (if output
+            (with-open-file (out output :direction :output
+                                        :if-exists :supersede
+                                        :external-format :utf-8)
+              (run out))
+            (run *standard-output*))))))

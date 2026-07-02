@@ -1,0 +1,68 @@
+# wav-rules.ninja — txt/ss から wav を作る共通ルール
+#
+# このファイルは各 build.ninja から include して使う。
+# include 元で以下の変数を定義してから include すること:
+#
+#   bin        markdown-cast/bin への相対パス（例: ../markdown-cast/bin）
+#   mecab_dict MeCab 複合語辞書のパス（例: ../share/mecab-private.dict.ss）
+#   pron_dict  読み辞書のパス（例: ../share/pronunciation.dict.ss）
+#   strip_opt  句読点を落とすなら --strip-punctuation、残すなら空（strip_opt =）
+#   break_ms   文節間の SSML break ms（例: 120）
+#   end_ms     文末の SSML break ms（0 推奨）
+#
+# Azure TTS を使う場合は key.ninja でさらに（azure.md 参照）:
+#   key        Azure Speech のサブスクリプションキー
+#   region     Azure リージョン（例: japaneast）
+#   voice      音声名（例: ja-JP-NanamiNeural）
+#   tts_opt    TTS オプション（例: --dry-run）
+#   limit      先頭 N 文だけ処理（課金ガード。0 で全件）
+#
+# ---- ビルド文の書き方 ----
+#
+# 【txt 経路】txt ファイルから wav を作る:
+#
+#   build _build/NAME.note.ss: wav_txt2ss NAME.txt
+#   build _build/NAME.bunsetu.ss: wav_bunsetu _build/NAME.note.ss | $mecab_dict
+#     src = _build/NAME.note.ss
+#   build _build/NAME.tts.ss: wav_tts_list _build/NAME.bunsetu.ss
+#   build _build/NAME.tts.result.ss: wav_tts _build/NAME.tts.ss | $pron_dict
+#     name = NAME
+#     src  = _build/NAME.tts.ss
+#   build _build/NAME.wav: wav_concat _build/NAME.tts.result.ss
+#     name = NAME
+#
+# 【ss 経路】note.ss 形式の .ss ファイルから wav を作る（txt2ss をスキップ）:
+#
+#   build _build/NAME.bunsetu.ss: wav_bunsetu NAME.ss | $mecab_dict
+#     src = NAME.ss
+#   build _build/NAME.tts.ss: wav_tts_list _build/NAME.bunsetu.ss
+#   build _build/NAME.tts.result.ss: wav_tts _build/NAME.tts.ss | $pron_dict
+#     name = NAME
+#     src  = _build/NAME.tts.ss
+#   build _build/NAME.wav: wav_concat _build/NAME.tts.result.ss
+#     name = NAME
+#
+# NAME を変えるだけで経路を複数追加できる。
+
+# ---- ルール ----
+
+rule wav_txt2ss
+  command = ros $bin/txt2ss.ros -i $in -o $out
+
+# bunsetu から先は txt/ss 経路で共通。src は build 文で指定する。
+rule wav_bunsetu
+  command = ros $bin/mapcar.ros $strip_opt --no-dic-white-list --dic $mecab_dict $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
+
+rule wav_tts_list
+  command = ros $bin/bunsetu2tts.ros -i $in -o $out
+
+# name は build 文で指定する。wav 出力先を _build/${name}-wav/ に分離することで
+# 複数の名前を並べても中間ファイルが衝突しない。
+# 実行前に古い wav を削除して glob による取り込み過多を防ぐ。
+rule wav_tts
+  command = mkdir -p _build/${name}-wav && rm -f _build/${name}-wav/output.*.wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $pron_dict $tts_opt --limit $limit --name "_build/${name}-wav/output.{%03i}.wav" -i $src > $out
+
+# tts.result.ss が上がったタイミングで wav が揃っているので、
+# それを依存に取り、glob で連結する。
+rule wav_concat
+  command = sox _build/${name}-wav/output.*.wav $out

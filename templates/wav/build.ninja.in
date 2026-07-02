@@ -1,0 +1,44 @@
+# ---- パラメータ ----
+bin        = @BIN@
+mecab_dict = @MECAB_DICT@
+pron_dict  = @PRON_DICT@
+
+# 字幕・音声から句読点（。、）を落とす。残したいときはこの行を空にする（strip_opt =）。
+strip_opt = --strip-punctuation
+
+# Azure TTS の SSML break(ミリ秒)。break_ms=文節間、end_ms=文末。
+# end_ms は 0 推奨: 末尾の間は tail_ms(mux 側)で持ち、wav 自体に無音を焼かない。
+break_ms  = 120
+end_ms    = 0
+
+include key.ninja
+
+include @WAV_RULES@
+
+# ---- txt 経路サンプル ----
+# sample.txt の各行を 1 発話として _build/sample.wav を作る。
+
+build _build/sample.note.ss: wav_txt2ss sample.txt
+build _build/sample.bunsetu.ss: wav_bunsetu _build/sample.note.ss | $mecab_dict
+  src = _build/sample.note.ss
+build _build/sample.tts.ss: wav_tts_list _build/sample.bunsetu.ss
+build _build/sample.tts.result.ss: wav_tts _build/sample.tts.ss | $pron_dict
+  name = sample
+  src  = _build/sample.tts.ss
+build _build/sample.wav: wav_concat _build/sample.tts.result.ss
+  name = sample
+
+default _build/sample.wav
+
+# ---- ss 経路の例（コメントアウト）----
+# note.ss 形式の .ss ファイルを直接置いて wav を作る場合は、以下をコピーして
+# NAME と foo を置き換え、コメントを外す。
+
+# build _build/foo.bunsetu.ss: wav_bunsetu foo.ss | $mecab_dict
+#   src = foo.ss
+# build _build/foo.tts.ss: wav_tts_list _build/foo.bunsetu.ss
+# build _build/foo.tts.result.ss: wav_tts _build/foo.tts.ss | $pron_dict
+#   name = foo
+#   src  = _build/foo.tts.ss
+# build _build/foo.wav: wav_concat _build/foo.tts.result.ss
+#   name = foo
