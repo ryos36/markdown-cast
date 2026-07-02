@@ -1,178 +1,133 @@
 # markdown-cast
 
-Marp の Markdown スライドを起点に、**字幕（SRT）・字幕焼き込み動画・ナレーション音声つき動画**を作るパイプライン。
-スライドに埋め込んだ発話ノート（原稿）を、形態素解析・文節化を経て字幕 / TTS 音声に変換し、
-**音声の長さに合わせて字幕とフレームのタイミングを自動で調整する**のが中心の仕事。
+Marp のスライドから、字幕・音声つき動画を作るツールです。
 
-ビルドは `ninja`、変換ツールは Common Lisp（Roswell / `ros`）と awk、
-音声・動画は Azure TTS / `sox` / `ffmpeg` / `gstreamer` / Marp CLI を使う。
-
-> このリポジトリは、別プロジェクト（子ども向けイベントの企画スライド動画化）で育てたパイプラインを切り出したもの。
+音声合成には Microsoft Azure TTS を使います。
 
 ---
 
 ## 何ができるか
 
-入力は 1 枚の Marp Markdown（`deck.md`）。発話ノートを HTML コメント `<!-- ... -->` で各スライドに書いておく。
-そこから次を作る。
+入力は Marp 形式の Markdown ファイル（`deck.md`）1 枚。
+発話ノートを HTML コメント `<!-- ... -->` で各スライドに書いておくと、
+次の 2 種類の動画を作れます。
 
-| 出力 | 中身 |
-|---|---|
-| `_build/<deck>.pdf` | Marp の PDF |
-| `_build/orig-png/*.png` | 1 スライド 1 枚の PNG |
-| `_build/subs.srt` | 字幕 SRT |
-| `_build/<deck>.mp4` | 字幕を焼き込んだ動画（音声なし） |
-| `_build/<deck>-audio.mp4` | 字幕＋ナレーション音声つき動画（最終成果物） |
+- **字幕つき動画** — Azure TTS なしで作れます
+- **音声つき動画** — Azure TTS を使います
 
-`ninja video`（音声なし動画）と `ninja pdf` は Azure 不要。  
-`ninja video-audio`（音声つき動画）は Azure TTS が必要。ただし後述のガードで課金をコントロールできる。
-
----
-
-## 必要なもの
-
-`ros`（Roswell）/ `mecab` / `gst-launch-1.0` / `ffmpeg` / `sox` / `npx`（Marp CLI）。  
-TTS には Azure Speech のキーが必要（`key.ninja` の `key` 変数。コミットしないこと）。  
-詳細な前提条件とバージョン・パッケージ名は [marp-to-movie.md](marp-to-movie.md) を参照。
-
----
-
-## 主なターゲット
-
-```
-ninja                 # デフォルト: video + video-audio + pdf をすべて作る
-ninja video           # 字幕つき動画（音声なし、Azure 不要）
-ninja pdf             # PDF（Azure 不要）
-ninja video-audio     # 音声つき最終動画（Azure 必要 / --dry-run 可）
-ninja wav             # TTS wav のみ生成
-ninja png             # スライド PNG のみ
-ninja srt             # 字幕 SRT のみ
-```
-
-`build.ninja` 冒頭の変数：`capms`（1 フレーム長）, `head_ms`/`tail_ms`（前後余白）,
-`break_ms`/`end_ms`（文節間・文末の間）, `threshold`（速すぎ防止の閾値）,
-`strip_opt`（`--strip-punctuation` で句読点を落とす、空なら残す）など。
-
----
-
-## Azure 課金のガード
-
-音声化（`ninja video-audio` の TTS ステップ）は Azure を呼ぶたびに課金される。
-`tts2wav.ros` には以下のガードが組み込まれている。
-
-### 1. `--dry-run`（デフォルト設定）
-
-Azure を呼ばず、再生時間を「文節数 × 固定値（既定 200 ms）」で見積もる。wav は作らない。  
-`key.ninja` の初期値は `tts_opt = --dry-run` なので、キーを設定せずにパイプライン全体の流れを確認できる。  
-文言を調整したり構成を試したりするときに使う。音声タイミングの精度は下がるが Azure は呼ばない。
-
-### 2. キャッシュ（同じ内容なら再生成しない）
-
-同じテキスト・設定で生成済みの wav があれば Azure を呼ばず再利用する。  
-メタデータは `_build/orig-wav/tts-info.ss` で管理する。テキストや設定が変わった wav だけ再生成し、旧 wav は `_build/backup-wav/` へ自動退避する。
-
-### 3. `limit`（既定 6）
-
-最初の N ページだけ音声化して止まる。最初の数ページだけ先に音声を確認したいときに使う。  
-`key.ninja` の `limit = 6` で設定する。全ページ音声化するときは `limit = 0` にする。
-
-なお `--dry-run` のまま（wav が 0 本）でも `video-audio` は作られる。音声の代わりにプリセット音（440Hz 0.3 秒）が先頭に一度鳴るだけで、実質ほぼ無音の動画になる。
-
-### 4. 途中まで書いた `tts.ss`
-
-`tts.ss` にエントリが書いてある分だけ処理される。スライドのノートを書き進めながら、できた分から順に音声化できる。後から追記しても既存 wav はキャッシュで再利用される。
-
-### 5. `--bootstrap`
-
-既存の wav を `tts-info.ss` に再登録する。wav はあるが info が欠けているとき（別環境から持ってきた場合など）に使う。Azure は呼ばない。
-
----
-
-## ツール一覧
-
-| ファイル | 種別 | 役割 |
-|---|---|---|
-| `note2ss.awk` | awk | 発話ノート（`<!-- -->`）を 1 個の S 式リストにする |
-| `note2word.ros` | mecab | テキストを `((単語 . 品詞) …)` にする |
-| `word2word.ros` | filter | 複合語辞書で mecab の分割を 1 語に畳む |
-| `word2bunsetu.ros` | filter | 助詞・副詞・句読点で区切って文節にまとめる |
-| `bunsetu2caption.ros` | filter | 文を字幕（caption）の列にする（N 文字で折り返し） |
-| `mapcar.ros` | 単体 | S 式の各要素に filter チェーンを mapcar する汎用ツール |
-| `caption2srt.ros` | 単体 | caption を平坦化して固定長の SRT にする |
-| `caption2pnglist.ros` | 単体 | caption からフレーム複製の元/先名の対を作る |
-| `bunsetu2tts.ros` | 単体 | 文節構造から「文ごと」の読み上げ単位を作る |
-| `tts2wav.ros` | Azure | 各文を Azure TTS で wav 化（読み辞書・SSML・キャッシュ） |
-| `tts2wavlist.ros` | 単体 | 音声の実測尺から factor / n / 通し番号を計算し `wavlist.ss` を作る |
-| `ss2finalpng.ros` | 単体 | 通し番号でフレームを並べ直す（ハードリンク） |
-| `ss2finalsrt.ros` | 単体 | 通し番号に合わせて SRT を再タイミング |
-| `final_audio_mux.sh` | ffmpeg | wav を時刻配置して動画に重ねる |
-
-補助：`ss2wav.ros`（単発 TTS）, `sort.ros` / `uniq.ros` / `nth.ros` / `pretty.ros` / `parsenum.ros` 等。
+まず字幕つき動画で内容を確認し、準備ができたら音声つき動画を作る流れをお勧めします。
 
 ---
 
 ## 始め方
 
-markdown-cast を git submodule として親プロジェクトに組み込み、`bin/init.sh` で足場を生成する。
+### 1. 作業ディレクトリを用意する
+
+スライドや音声ファイルを置くディレクトリを作り、
+markdown-cast を git submodule として追加します。
 
 ```sh
-# 1. 親プロジェクトを作る
 mkdir my-slides && cd my-slides
 git init
 git submodule add https://github.com/ryos36/markdown-cast
-
-# 2. 足場を生成する（ディレクトリ名を引数で指定する）
-sh markdown-cast/bin/init.sh slide0
-sh markdown-cast/bin/init.sh slide1
 ```
 
-`init.sh` は環境チェックを行い、`slide0/deck.md` / `slide0/build.ninja` / `slide0/key.ninja` と
-辞書テンプレート（`share/mecab-private.dict.ss` / `share/pronunciation.dict.ss`）を生成する。
+git を使わない場合は、GitHub からダウンロードしたファイルを `markdown-cast/` に置いても動きます。
+
+### 2. 必要なファイルを生成する
 
 ```sh
-# 3. deck.md を書く（発話ノートを <!-- --> で書く）
-$EDITOR slide0/deck.md
-
-# 4. ninja でビルド
-cd slide0
-ninja video    # 字幕つき動画（Azure 不要）
-ninja          # 全成果物（デフォルト: video + video-audio + pdf）
+sh markdown-cast/bin/init.sh intro
 ```
 
-音声つき動画（`video-audio`）を作るには `key.ninja` の `key` に Azure Speech のキーを設定し、
-`tts_opt = --dry-run` の行をコメントアウトすること（コミットしないこと）。
+引数にディレクトリ名を渡します。このディレクトリ名が出力ファイル名になります。
+
+```
+intro  →  _build/intro.mp4
+```
+
+実行すると `intro/deck.md`・`intro/build.ninja`・`intro/key.ninja` と
+辞書テンプレート（`share/mecab-private.dict.ss` / `share/pronunciation.dict.ss`）が作られます。
+
+ディレクトリ名はスライドの内容に合った名前をつけることをお勧めします。
+
+```
+my-slides/
+├── markdown-cast/       (submodule)
+├── share/
+│   ├── mecab-private.dict.ss
+│   └── pronunciation.dict.ss
+└── intro/
+    ├── build.ninja
+    ├── deck.md
+    └── key.ninja
+```
+
+### 3. スライドと発話ノートを書く
+
+`intro/deck.md` を編集します。
+スライドの内容と、`<!-- -->` の中に話す内容（発話ノート）を書きます。
+
+```markdown
+## スライドタイトル
+
+スライドの内容
+
+<!-- ここに話す内容 -->
+```
+
+発話ノートに書いた内容が、動画の字幕になります（Azure TTS を使えば音声にもなります）。
+
+### 4. 動画を作る
+
+```sh
+cd intro
+ninja video    # 字幕つき動画（Azure 不要）
+```
+
+`_build/intro.mp4` に字幕つきの動画ができます。
+
+### 5. 動画を再生する
+
+```sh
+ffplay _build/intro.mp4    # Linux
+open   _build/intro.mp4    # Mac
+```
 
 ---
 
-## 動作の細かい仕様
+## サンプルを試す
 
-### 文節区切りの特殊ルール（word2bunsetu）
+`examples/` に動かせるサンプルがあります。
 
-- **全角空白「　」** を原稿に書くと手動で文節を区切れる。mecab の分け方が気に入らないときに使う。半角空白は mecab が捨てるので効かない。
-- **助詞が文節閉じ直後に来た場合**（buf が空のとき）、新しい空文節を作らず直前の文節にくっつける。
-- **ASCII 英数字が連続するときだけ**単語間に半角スペースを自動挿入する（例: `top of the world`）。記号や日本語が混じる語（`micro:bit`、`ryosさん`）には入らない。
-- **句読点「。」「、」**は品詞でなく表層（文字）で判断する。mecab が何の品詞として返しても、`。` か `、` なら文節と文を区切る。
+```sh
+cd examples/intro
+ninja video    # 字幕つき動画
+```
 
-### 読み辞書は音声側だけに効く（tts2wav）
-
-`pronunciation.dict.ss` の置換（例: `("micro:bit" . "マイクロビット")`）は SSML の読み上げ側だけに適用される。字幕は元の表記のまま表示される。
-
-書き方は **dot 対**（`"見出し" . "読み"`）。`("micro:bit" "マイクロビット")` のようにドットなしで書くとエラーになる。
-
-### 空文字列は未設定扱い（tts2wav）
-
-ninja 変数が未設定のまま空文字列として渡された場合、`tts2wav` は空文字列を nil 扱いにする。
-
-### wav の処理は先頭から順に、欠けたところで打ち切り（tts2wavlist）
-
-A 番号順に wav を処理し、最初に wav が存在しない番号に当たった時点で打ち切る。それ以降の出力は作らない。途中まで音声化した状態でパイプラインを動かすときの挙動。
+Azure TTS を使う場合は `key.ninja` に API キーを設定してから `ninja video-audio` を実行します。
 
 ---
 
-## ドキュメント
+## 次のステップ
 
-| ファイル | 内容 |
-|---|---|
-| [design.md](design.md) | 設計思想（文節=1フレームの時間軸、音声・字幕合わせの仕組み） |
-| [pipeline.md](pipeline.md) | 処理順の概要（8ステップのデータフロー） |
-| [marp-to-movie.md](marp-to-movie.md) | 各ステップの実行コマンドと前提条件の詳細 |
+Azure TTS での音声合成、limit / dry-run を使った効率的な進め方、
+文節・句読点・読みの調整など、詳しい使い方は [tutorial.md](tutorial.md) を参照してください。
+
+---
+
+## powered by markdown-cast
+
+このツールを使って作った動画には、ぜひ紹介をつけてください。
+
+https://github.com/ryos36/markdown-cast
+
+---
+
+## 必要な環境
+
+`ros`（Roswell）/ `mecab` / `npx`（Node.js）/ `gst-launch-1.0`（GStreamer）/ `sox` / `ffmpeg`
+
+インストール手順は [install.md](install.md) を参照してください。
+
+Azure TTS を使う場合は Azure Speech のサブスクリプションキーが別途必要です。
