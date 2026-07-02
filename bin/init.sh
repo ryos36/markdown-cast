@@ -2,8 +2,7 @@
 # init.sh — markdown-cast プロジェクトの足場を作る
 #
 # 使い方:
-#   sh markdown-cast/bin/init.sh           # 単発: カレントに直接 deck.md / build.ninja を置く
-#   sh markdown-cast/bin/init.sh slide0    # 複数: slide0/ サブディレクトリに置く（辞書は share/ に共通化）
+#   sh markdown-cast/bin/init.sh <NAME>    # NAME/ サブディレクトリに足場を生成する（辞書は share/ に共通化）
 
 set -e
 
@@ -37,30 +36,24 @@ if [ "$MISSING" -eq 1 ]; then
 fi
 echo ""
 
-# ---- モード判定 ----
+# ---- 引数チェック ----
 NAME="$1"
 if [ -z "$NAME" ]; then
-    # 単発（フラット）
-    DESTDIR="."
-    BIN="$SUBMOD/bin"
-    SHARE="."
-    RULES="$SUBMOD/share/rules.ninja"
-    DICT_DIR="."
-    DECK=$(basename "$(pwd)")
-else
-    # 複数（サブディレクトリ）
-    DESTDIR="$NAME"
-    BIN="../$SUBMOD/bin"
-    SHARE="../share"
-    RULES="../$SUBMOD/share/rules.ninja"
-    DICT_DIR="share"
-    DECK="$NAME"
+    echo "使い方: sh markdown-cast/bin/init.sh <NAME>"
+    exit 1
 fi
 
+# ---- パス設定 ----
+DESTDIR="$NAME"
+BIN="../$SUBMOD/bin"
+MECAB_DICT="../share/mecab-private.dict.ss"
+PRON_DICT="../share/pronunciation.dict.ss"
+RULES="../$SUBMOD/share/rules.ninja"
+DICT_DIR="share"
+DECK="$NAME"
+
 # ---- 辞書を配置 ----
-if [ "$DICT_DIR" != "." ]; then
-    mkdir -p "$DICT_DIR"
-fi
+mkdir -p "$DICT_DIR"
 copy_if_missing() {
     src="$1"
     dst="$2"
@@ -75,15 +68,14 @@ copy_if_missing "$TMPL/pronunciation.dict.ss"  "$DICT_DIR/pronunciation.dict.ss"
 copy_if_missing "$TMPL/mecab-private.dict.ss"  "$DICT_DIR/mecab-private.dict.ss"
 
 # ---- build.ninja を生成 ----
-if [ -n "$NAME" ]; then
-    mkdir -p "$DESTDIR"
-fi
+mkdir -p "$DESTDIR"
 NINJA_DST="$DESTDIR/build.ninja"
 if [ -e "$NINJA_DST" ]; then
     echo "  [skip]    $NINJA_DST（既存）"
 else
     sed -e "s|@BIN@|$BIN|g" \
-        -e "s|@SHARE@|$SHARE|g" \
+        -e "s|@MECAB_DICT@|$MECAB_DICT|g" \
+        -e "s|@PRON_DICT@|$PRON_DICT|g" \
         -e "s|@RULES@|$RULES|g" \
         -e "s|@DECK@|$DECK|g" \
         "$TMPL/build.ninja.in" > "$NINJA_DST"
@@ -109,23 +101,12 @@ copy_if_missing "$TMPL/deck.md" "$DECK_DST"
 # ---- 完了メッセージ ----
 echo ""
 echo "Done."
-if [ -n "$NAME" ]; then
-    echo ""
-    echo "  次のステップ:"
-    echo "    cd $NAME"
-    echo "    \$EDITOR deck.md   # 発話ノートを <!-- --> で書く"
-    echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
-    echo ""
-    echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    \$EDITOR key.ninja  # key / region / voice を設定（$SUBMOD/azure.md 参照）"
-    echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
-else
-    echo ""
-    echo "  次のステップ:"
-    echo "    \$EDITOR deck.md   # 発話ノートを <!-- --> で書く"
-    echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
-    echo ""
-    echo "  音声つき動画を作る場合（Azure TTS が必要）:"
-    echo "    \$EDITOR key.ninja  # key / region / voice を設定（$SUBMOD/azure.md 参照）"
-    echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"
-fi
+echo ""
+echo "  次のステップ:"
+echo "    cd $NAME"
+echo "    \$EDITOR deck.md   # 発話ノートを <!-- --> で書く"
+echo "    ninja              # ${DECK}.mp4 と ${DECK}.pdf を生成（Azure 不要）"
+echo ""
+echo "  音声つき動画を作る場合（Azure TTS が必要）:"
+echo "    \$EDITOR key.ninja  # key / region / voice を設定（$SUBMOD/azure.md 参照）"
+echo "    ninja video-audio  # ${DECK}-audio.mp4 を生成"

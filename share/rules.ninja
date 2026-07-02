@@ -3,10 +3,11 @@
 # このファイルは各 build.ninja から include して使う。
 # include 元で以下の変数を定義してから include すること:
 #
-#   deck      出力ファイルのベース名（例: slide0, my-talk）
-#   bin       markdown-cast/bin への相対パス（例: ../markdown-cast/bin）
-#   share     辞書ディレクトリへの相対パス（例: ../share または .）
-#   capms     1フレームの長さ ms（例: 800）
+#   deck       出力ファイルのベース名（例: slide0, my-talk）
+#   bin        markdown-cast/bin への相対パス（例: ../markdown-cast/bin）
+#   mecab_dict MeCab 複合語辞書のパス（例: ../share/mecab-private.dict.ss）
+#   pron_dict  読み辞書のパス（例: ../share/pronunciation.dict.ss）
+#   capms      1フレームの長さ ms（例: 800）
 #   head_ms   各文の頭の余白 ms（例: 50）
 #   tail_ms   各文の末尾の余白 ms（例: 10）
 #   threshold この倍速を超えるとフレームを追加（例: 1.3）
@@ -27,7 +28,7 @@ rule note2ss
   command = awk -f $bin/note2ss.awk deck.md > $out
 
 rule bunsetu
-  command = ros $bin/mapcar.ros $strip_opt --no-dic-white-list --dic $share/mecab-private.dict.ss $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
+  command = ros $bin/mapcar.ros $strip_opt --no-dic-white-list --dic $mecab_dict $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
 
 rule caption
   command = ros $bin/bunsetu2caption.ros --max-chars $max_chars $in -o $out
@@ -51,7 +52,7 @@ rule tts_list
   command = ros $bin/bunsetu2tts.ros -i $in -o $out
 
 rule tts_wav
-  command = mkdir -p _build/orig-wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $share/pronunciation.dict.ss $tts_opt --limit $limit --name '_build/orig-wav/output.{%03i}.wav' -i $src > $out
+  command = mkdir -p _build/orig-wav && ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $pron_dict $tts_opt --limit $limit --name '_build/orig-wav/output.{%03i}.wav' -i $src > $out
 
 rule wavlist
   command = ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
@@ -77,7 +78,7 @@ rule final_audio_mux
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
 
-build _build/bunsetu.ss: bunsetu _build/note.ss $share/mecab-private.dict.ss
+build _build/bunsetu.ss: bunsetu _build/note.ss $mecab_dict
   src = _build/note.ss
 
 build _build/caption.ss: caption _build/bunsetu.ss
@@ -95,7 +96,7 @@ build _build/${deck}.mp4: gst_caption _build/new-png/.done _build/subs.srt
 
 build _build/tts.ss: tts_list _build/bunsetu.ss
 
-build _build/tts.result.ss: tts_wav _build/tts.ss $share/pronunciation.dict.ss
+build _build/tts.result.ss: tts_wav _build/tts.ss $pron_dict
   src = _build/tts.ss
 
 build _build/wavlist.ss: wavlist _build/tts.ss _build/tts.result.ss
@@ -122,3 +123,13 @@ build srt: phony _build/subs.srt
 build video: phony _build/${deck}.mp4
 build wav: phony _build/tts.result.ss
 build video-audio: phony _build/${deck}-audio.mp4
+
+# ---- クリーンターゲット ----
+rule do_clean_png
+  command = find _build/orig-png -type f -exec rm {} + 2>/dev/null; rmdir _build/orig-png 2>/dev/null; find _build/new-png -type f -exec rm {} + 2>/dev/null; rmdir _build/new-png 2>/dev/null; find _build/final-png -type f -exec rm {} + 2>/dev/null; rmdir _build/final-png 2>/dev/null; true
+
+rule do_clean_wav
+  command = find _build/orig-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/orig-wav 2>/dev/null; find _build/final-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/final-wav 2>/dev/null; find _build/backup-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/backup-wav 2>/dev/null; true
+
+build clean-png: do_clean_png
+build clean-wav: do_clean_wav

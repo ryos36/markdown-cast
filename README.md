@@ -121,23 +121,20 @@ mkdir my-slides && cd my-slides
 git init
 git submodule add https://github.com/ryos36/markdown-cast
 
-# 2. 足場を生成する
-#    スライド1本だけのとき（カレントにファイルを置く）
-sh markdown-cast/bin/init.sh
-
-#    スライドを複数管理するとき（サブディレクトリ + 辞書を share/ に共通化）
+# 2. 足場を生成する（ディレクトリ名を引数で指定する）
 sh markdown-cast/bin/init.sh slide0
 sh markdown-cast/bin/init.sh slide1
 ```
 
-`init.sh` は環境チェックを行い、`deck.md` / `build.ninja` / `key.ninja` / 辞書テンプレートを生成する。
+`init.sh` は環境チェックを行い、`slide0/deck.md` / `slide0/build.ninja` / `slide0/key.ninja` と
+辞書テンプレート（`share/mecab-private.dict.ss` / `share/pronunciation.dict.ss`）を生成する。
 
 ```sh
 # 3. deck.md を書く（発話ノートを <!-- --> で書く）
-$EDITOR deck.md          # 単発の場合
-$EDITOR slide0/deck.md   # サブディレクトリの場合
+$EDITOR slide0/deck.md
 
 # 4. ninja でビルド
+cd slide0
 ninja video    # 字幕つき動画（Azure 不要）
 ninja          # 全成果物（デフォルト: video + video-audio + pdf）
 ```

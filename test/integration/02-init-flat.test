@@ -1,8 +1,0 @@
-# REQUIRES: ninja, npx, gst-launch-1.0
-# RUN: rm -rf %T/proj-flat && mkdir -p %T/proj-flat
-# RUN: ln -sfn %S/../.. %T/proj-flat/markdown-cast
-# RUN: cd %T/proj-flat && sh markdown-cast/bin/init.sh
-# RUN: cp %S/fixtures/deck.md %T/proj-flat/deck.md
-# RUN: cd %T/proj-flat && ninja -j1 video pdf
-# RUN: test -f %T/proj-flat/_build/proj-flat.mp4
-# RUN: test -f %T/proj-flat/_build/proj-flat.pdf

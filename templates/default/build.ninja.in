@@ -1,7 +1,8 @@
 # ---- パラメータ ----
-deck  = @DECK@
-bin   = @BIN@
-share = @SHARE@
+deck      = @DECK@
+bin       = @BIN@
+mecab_dict = @MECAB_DICT@
+pron_dict  = @PRON_DICT@
 
 # 1 caption(=1 フレーム/SRT エントリ)の表示時間(ミリ秒)。
 # caption2srt の --ms と動画の framerate(=1000/capms fps) を両方ここで決める。

@@ -1,29 +1,62 @@
 # Podman 環境の構想と計画
 
-## 段階計画
+## 実現可能性と段階計画
 
-一気に本格実装はせず、捨て環境で動作を確認してから本格環境に移る。
+フェーズ1（最小イメージ動作確認）・フェーズ2（init.sh 〜 ninja video 検証）は完了済み。
+以下は本格実装に向けた計画。
 
-### フェーズ 1: 捨て環境が動く（最小イメージ）
+### 透過化の鍵: `$run` ラッパ変数
 
-- `podman/Containerfile` を作る（最小ベース＋bash のみ）。
-- `podman build` → `podman run --rm -it ... bash` で bash 起動を確認。
-- ゴール: イメージ build 〜 起動のサイクルが回ること。
+`rules.ninja` の各 rule command の先頭に変数 `$run` を付ける。
 
-### フェーズ 2: 捨て環境で init.sh 〜 build を試す
+```
+rule bunsetu
+  command = $run ros $bin/mapcar.ros ...
+```
 
-- Containerfile に依存を追加（ros+Quicklisp(adopt/dexador/babel) / mecab+辞書 /
-  node+marp / gstreamer(base/good/ugly) / fonts-noto-cjk / sox / ffmpeg）。
-  捨て環境なので雑でよい。動くことの確認が目的。
-- markdown-cast と作業ディレクトリをマウントし、コンテナ内で init.sh → `ninja video`
-  （--dry-run / Azure 不要）を試す。
-- ゴール: mp4 まで通るか確認。詰まり箇所（marp の Chromium / mecab 辞書 / フォント等）を洗い出す。
+- **ホスト実行**: `run` を定義しない（ninja の未定義変数は空展開）。コマンドは従来と完全一致。
+  既存の build.ninja は変更不要。壊れない。
+- **コンテナ実行**: build.ninja 側で `run = podman run --rm $ct_vol markdown-cast:v1` を定義。
+  ninja がコマンドを展開するとき自動的にコンテナ実行になる。
 
-### フェーズ 3: 本格 podman 環境
+### バージョン混在の鍵: イメージタグ + ディレクトリごとの `image` 変数
 
-- フェーズ 2 の知見で構想（後述）を実装する。
-  `init.sh --container` / rules.ninja のコンテナ版 command / 正式 Containerfile。
-- 捨て環境は本格版に置き換える。
+Containerfile をバージョンごとにディレクトリで管理する（`podman/v1/`, `podman/v2/`, ...）。
+各バージョンを別タグでビルド（`markdown-cast:v1`, `markdown-cast:v2`）。
+
+各スライドディレクトリの build.ninja は `image = markdown-cast:v1` のように使うタグを持つ。
+- v1 で動いているディレクトリはそのまま v1 を使い続ける。
+- 新ディレクトリだけ v2 を使う。
+- ホスト実行のディレクトリは `run` を定義しないだけ。
+
+3 種が同居でき、互いに干渉しない。
+
+### フェーズ 1: `$run` ラッパを rules.ninja に導入
+
+- `share/rules.ninja` の全 rule command 先頭に `$run` を追加。
+- ホスト実行（`run` 未定義）で既存テストが全件 PASS することを `lit test/` で確認。
+
+### フェーズ 2: Containerfile をバージョン管理に移行
+
+- 現 `podman/Containerfile`（検証済み）を `podman/v1/Containerfile` に移す。
+- `podman build -t markdown-cast:v1 podman/v1/` でタグ付きビルド。
+- `.gitignore` を整理（`podman/work/` は維持）。
+
+### フェーズ 3: `init.sh --container <NAME>` を実装
+
+- サブディレクトリモード（NAME あり）のみ対応。フラットは非対応。
+- コンテナ版 build.ninja を生成する（`run` / `image` / コンテナ内 bin・share パス）。
+- 通常の `init.sh <NAME>`（コンテナなし）はそのまま使える。
+
+### フェーズ 4: マウントとファイル所有権の確定
+
+- マウント設計: ホスト `./NAME` を `/work` に、markdown-cast を `/work/markdown-cast` にマウント。
+- Podman rootless userns でホスト uid に書き出されることを実機確認。
+- Azure キー（`key.ninja`）は `/work` マウントに含まれるため追加対応不要。
+
+### フェーズ 5: 混在検証
+
+- ホスト実行 / v1 / v2 の 3 ディレクトリを同じ親に置き、それぞれ独立して ninja が動くことを確認。
 
 ---
 

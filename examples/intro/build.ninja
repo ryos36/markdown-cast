@@ -1,7 +1,8 @@
 # ---- パラメータ ----
-deck  = intro
-bin   = ../../bin
-share = .
+deck       = intro
+bin        = ../../bin
+mecab_dict = mecab-private.dict.ss
+pron_dict  = pronunciation.dict.ss
 
 capms     = 800
 head_ms   = 50
@@ -15,10 +16,7 @@ strip_opt = --strip-punctuation
 break_ms  = 120
 end_ms    = 0
 
-# Azure TTS の設定（ninja wav を使うときだけ必要）
-# key    = $AZURE_KEY
-# region = japaneast
-# voice  = ja-JP-NanamiNeural
+include key.ninja
 
 include ../../share/rules.ninja
 
