@@ -78,7 +78,7 @@ limit = 0   # 全ページ
 ### 2. `--dry-run` で音声合成をスキップする
 
 `key.ninja` の `tts_opt` に `--dry-run` を設定すると、
-Azure を呼ばずにパイプライン全体の流れを確認できます。
+Azure を呼ばずに処理全体の流れを確認できます。
 
 ```
 tts_opt = --dry-run

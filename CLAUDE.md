@@ -1,9 +1,12 @@
 # CLAUDE.md — markdown-cast
 
-## プロジェクトの状態（2026-07-02 時点）
+## プロジェクトの状態（2026-07-03 時点）
 
 Marp から字幕・音声つき動画を作る 8 ステップの全工程実装済み。  
-lit テスト 38 件すべて PASS。
+ninja によるビルドも整備済み（`share/rules.ninja` を各 deck の `build.ninja` から include し、
+`ninja video-audio` で最終成果物まで一発で作れる）。  
+README / tutorial.md / install.md も公開向けに整備済み。  
+lit テスト 37 件すべて PASS。
 
 ## テスト実行
 
@@ -19,6 +22,10 @@ lit test/
 ```
 bin/              全ツール（.ros = Common Lisp、.sh = シェル）
 test/             lit テスト（ステップごとにサブディレクトリ）
+share/            共通の ninja ルール（rules.ninja）・辞書・素材
+templates/        新規 deck の雛形（build.ninja.in、key.ninja 等）
+examples/         サンプル deck（intro、rawls-san）
+podman/ podman.md コンテナ化の作業ディレクトリと計画
 pipeline.md       処理順の概要
 marp-to-movie.md  各ステップの実行コマンドと前提条件の詳細
 TODO.md           懸念点・積み残し課題
@@ -40,5 +47,6 @@ TODO.md           懸念点・積み残し課題
 
 優先順は TODO.md を参照。主な積み残し:
 
-1. **build.ninja の整備** — 現状は各ステップを手で実行する形。`ninja final-caption-audio.mp4` 一発で回せるようにする
-2. **README の整備** — GitHub 公開向けにインストール方法と最小限の使い方を追加
+1. **gstreamer のフォント依存チェック** — `lit.cfg.py` に `fonts-noto-cjk` の feature 登録を追加
+2. **Podman コンテナ化の続き** — `$run` ラッパ変数の導入から再開（podman.md 参照）
+3. **サンプル動画の公開** — examples/ の完成 mp4 を GitHub Releases 等に置く

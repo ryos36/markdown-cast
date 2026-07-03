@@ -10,7 +10,7 @@ voice  = ja-JP-NanamiNeural
 limit = 6
 
 # tts_opt: 音声合成のオプション。複数指定するときはスペースで並べる。
-#   --dry-run         実際に音声を作らずパイプラインの流れを確認する
+#   --dry-run         実際に音声を作らず処理の流れを確認する
 #   --pitch -10%      声の高さ（マイナスで低く、プラスで高く）
 #   --rate  -15%      速さ（マイナスでゆっくり、プラスで速く）
 #   --style cheerful  話し方スタイル（cheerful / calm など）

@@ -10,14 +10,6 @@
 
 ---
 
-## capms の一貫性
-
-`capms=800` を複数箇所（`caption2srt`・`tts2wavlist`・`final_audio_mux`・gstreamer の `framerate`）に
-個別に渡している。どれか一つ変え忘れると動画と音声がずれる。  
-`build.ninja` で変数化することで解決できる。
-
----
-
 ## mapcar の whitelist の設計メモ
 
 `mapcar.ros` の whitelist 照合は 2 つの対象を持つ:
@@ -40,13 +32,6 @@
 
 辞書を固定して管理したい場合はフラグを外して
 whitelist ハッシュを管理する形に戻すとよい。
-
----
-
-## key.ninja の dry-run 説明文が誤り
-
-`key.ninja` のコメント「Azure を使わず wav の長さだけ見積もる dry-run モード」は誤った解釈。
-正しい説明に直す。
 
 ---
 
