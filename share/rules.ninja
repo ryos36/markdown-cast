@@ -73,7 +73,7 @@ rule marp_pdf
   command = mkdir -p _build && npx --yes @marp-team/marp-cli@latest deck.md --allow-local-files -o _build/${deck}.pdf
 
 rule final_audio_mux
-  command = VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms PRESET_WAV=$bin/../share/preset-silence.wav sh $bin/final_audio_mux.sh
+  command = VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms PRESET_WAV=$bin/../share/preset.wav sh $bin/final_audio_mux.sh
 
 # ---- ビルドターゲット ----
 build _build/note.ss: note2ss deck.md
