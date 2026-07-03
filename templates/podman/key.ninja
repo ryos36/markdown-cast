@@ -1,0 +1,17 @@
+# Azure TTS の設定（ninja video-audio に必要）
+# 詳しくは README.md を参照。このファイルは git にコミットしないこと。
+# 実際のキーに書き換えること。
+key    = YOUR_AZURE_KEY
+region = japaneast
+voice  = ja-JP-NanamiNeural
+
+# 最初の N ページだけ音声化する（課金を抑えるため）。全ページやるなら 0 にする。
+# 詳しくは README.md の「Azure 課金のガード」を参照。
+limit = 6
+
+# tts_opt: 音声合成のオプション。複数指定するときはスペースで並べる。
+#   --dry-run         実際に音声を作らず処理の流れを確認する
+#   --pitch -10%      声の高さ（マイナスで低く、プラスで高く）
+#   --rate  -15%      速さ（マイナスでゆっくり、プラスで速く）
+#   --style cheerful  話し方スタイル（cheerful / calm など）
+tts_opt = --dry-run

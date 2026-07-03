@@ -1,0 +1,164 @@
+# rules-podman.ninja — markdown-cast 共通ルール（podman 版）
+#
+# rules.ninja のコンテナ実行版。ホスト実行用の rules.ninja には触れない。
+# 各 rule の command はコンテナ内で実行する。ninja の依存追跡は
+# ホスト上のファイルタイムスタンプで従来どおり動く（実行だけコンテナ内）。
+#
+# このファイルは各 build.ninja から include して使う。
+# include 元で以下の変数を定義してから include すること
+# （通常は init-podman.sh が生成する build.ninja が定義する）:
+#
+#   image      使用するコンテナイメージのタグ（例: localhost/markdown-cast:v1）
+#   deck       出力ファイルのベース名（例: slide0, my-talk）
+#   bin        コンテナ内の markdown-cast/bin（例: /markdown-cast/bin）
+#   mecab_dict MeCab 複合語辞書のパス（例: ../share/mecab-private.dict.ss）
+#   pron_dict  読み辞書のパス（例: ../share/pronunciation.dict.ss）
+#   capms      1フレームの長さ ms（例: 800）
+#   head_ms   各文の頭の余白 ms（例: 50）
+#   tail_ms   各文の末尾の余白 ms（例: 10）
+#   threshold この倍速を超えるとフレームを追加（例: 1.3）
+#   max_chars 1 caption の最大文字数（例: 10）
+#   break_ms  文節間の SSML break ms（例: 120）
+#   end_ms    文末の SSML break ms（0 推奨）
+#   strip_opt 句読点を落とすなら --strip-punctuation、残すなら空（strip_opt =）
+#
+# Azure TTS を使う場合は key.ninja でさらに（azure.md 参照）:
+#   key       Azure Speech のサブスクリプションキー
+#   region    Azure リージョン（例: japaneast）
+#   voice     音声名（例: ja-JP-NanamiNeural）
+#   tts_opt   TTS オプション（例: --dry-run）通常は空
+
+# ---- コンテナ実行の共通変数 ----
+
+# マウント: 作業ディレクトリを /work、親の share を /work/share、
+# markdown-cast 本体を /markdown-cast に割り当てる。
+# $$PWD は sh 実行時に展開される（ninja の $$ は $ のエスケープ）。
+ct_vol = -v $$PWD:/work -v $$PWD/../share:/work/share -v $$PWD/../markdown-cast:/markdown-cast
+
+# 各 rule の command の先頭に付けるコンテナ実行コマンド。
+run = podman run --rm --workdir /work $ct_vol $image
+
+# 辞書のコンテナ内パス。
+# mecab_dict / pron_dict（ホスト相対パス）は ninja の依存関係に使うため残し、
+# command にはこちらを使う。
+ct_mecab_dict = /work/share/mecab-private.dict.ss
+ct_pron_dict  = /work/share/pronunciation.dict.ss
+
+# ---- ルール ----
+# 出力リダイレクト（> $out）はホスト側の sh が処理する。
+# コンテナは標準出力に書き、ファイルはホスト側にできる。
+
+rule note2ss
+  command = $run awk -f $bin/note2ss.awk deck.md > $out
+
+rule bunsetu
+  command = $run ros $bin/mapcar.ros $strip_opt --no-dic-white-list --dic $ct_mecab_dict $bin/note2word.ros $bin/word2word.ros $bin/word2bunsetu.ros -i $src -o $out
+
+rule caption
+  command = $run ros $bin/bunsetu2caption.ros --max-chars $max_chars $in -o $out
+
+rule srt
+  command = $run ros $bin/caption2srt.ros --ms $capms $in -o $out
+
+# marp はイメージにインストール済みのものを使う（npx は使わない）。
+# mkdir / touch はホスト側で行う。
+rule marp_png
+  command = mkdir -p _build/orig-png && $run marp deck.md --images png --allow-local-files -o _build/orig-png/slide.png && touch $out
+
+rule pnglist
+  command = $run ros $bin/caption2pnglist.ros -i $in '_build/orig-png/slide.{%03i}.png' '_build/new-png/frame.{%03j}.png' > $out
+
+# frame_link はホスト側のファイル操作（ln）だけなのでコンテナを使わない。
+rule frame_link
+  command = mkdir -p _build/new-png && xargs -n 2 ln -f < $in && touch $out
+
+rule gst_caption
+  command = $run gst-launch-1.0 multifilesrc location="_build/new-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
+
+rule tts_list
+  command = $run ros $bin/bunsetu2tts.ros -i $in -o $out
+
+rule tts_wav
+  command = mkdir -p _build/orig-wav && $run ros $bin/tts2wav.ros --key $key --region $region --voice $voice --break-ms $break_ms --end-ms $end_ms --dic $ct_pron_dict $tts_opt --limit $limit --name '_build/orig-wav/output.{%03i}.wav' -i $src > $out
+
+rule wavlist
+  command = $run ros $bin/tts2wavlist.ros --capms $capms --head-ms $head_ms --tail-ms $tail_ms --threshold $threshold '_build/orig-wav/output.{%03i}.wav' '_build/final-wav/output.{%03i}.wav' -i $in -o $out
+
+rule final_pnglist
+  command = $run ros $bin/ss2finalpng.ros -i _build/wavlist.ss -c _build/caption.ss '_build/new-png/frame.{%03i}.png' '_build/final-png/frame.{%03i}.png' > $out
+
+# final_frame_link はホスト側のファイル操作（ln）だけなのでコンテナを使わない。
+rule final_frame_link
+  command = mkdir -p _build/final-png && xargs -n 2 ln -f < $in && touch $out
+
+rule final_srt
+  command = $run ros $bin/ss2finalsrt.ros -i _build/wavlist.ss --capms $capms _build/caption.ss -o $out
+
+rule gst_final
+  command = $run gst-launch-1.0 multifilesrc location="_build/final-png/frame.%03d.png" index=1 caps="image/png,framerate=1000/$capms" ! pngdec ! videoconvert ! videobox border-alpha=0 bottom=-180 ! textoverlay name=t font-desc="Noto Sans CJK JP 20" valignment=bottom halignment=left line-alignment=left xpad=20 ! videoconvert ! x264enc ! mp4mux ! filesink location=$out filesrc location=_build/final-subs.srt ! subparse subtitle-encoding=UTF-8 ! t.
+
+rule marp_pdf
+  command = mkdir -p _build && $run marp deck.md --allow-local-files -o _build/${deck}.pdf
+
+# 環境変数はコンテナ内で設定する必要があるため env で渡す。
+rule final_audio_mux
+  command = $run env VIDEO=_build/_final-caption.mp4 OUT=$out WAVLISTSS=_build/wavlist.ss HEAD_MS=$head_ms FRAME_MS=$capms PRESET_WAV=$bin/../share/preset.wav sh $bin/final_audio_mux.sh
+
+# ---- ビルドターゲット ----
+build _build/note.ss: note2ss deck.md
+
+build _build/bunsetu.ss: bunsetu _build/note.ss $mecab_dict
+  src = _build/note.ss
+
+build _build/caption.ss: caption _build/bunsetu.ss
+
+build _build/subs.srt: srt _build/caption.ss
+
+build _build/orig-png/.done: marp_png deck.md
+
+build _build/pnglist.txt: pnglist _build/caption.ss
+
+build _build/new-png/.done: frame_link _build/pnglist.txt | _build/orig-png/.done
+
+# 字幕つき動画（音声なし）= デフォルト成果物
+build _build/${deck}.mp4: gst_caption _build/new-png/.done _build/subs.srt
+
+build _build/tts.ss: tts_list _build/bunsetu.ss
+
+build _build/tts.result.ss: tts_wav _build/tts.ss $pron_dict
+  src = _build/tts.ss
+
+build _build/wavlist.ss: wavlist _build/tts.ss _build/tts.result.ss
+
+build _build/final-pnglist.txt: final_pnglist _build/wavlist.ss _build/caption.ss
+
+build _build/final-png/.done: final_frame_link _build/final-pnglist.txt | _build/new-png/.done
+
+build _build/final-subs.srt: final_srt _build/wavlist.ss _build/caption.ss
+
+# 中間: 通し番号振り直し済み・音声なし
+build _build/_final-caption.mp4: gst_final _build/final-png/.done _build/final-subs.srt
+
+# 字幕＋音声つき動画 = 最終成果物（Azure 必要）
+build _build/${deck}-audio.mp4: final_audio_mux _build/_final-caption.mp4 _build/wavlist.ss
+
+# ---- ビルド: PDF ----
+build _build/${deck}.pdf: marp_pdf deck.md
+
+# ---- 短縮ターゲット ----
+build pdf: phony _build/${deck}.pdf
+build png: phony _build/orig-png/.done
+build srt: phony _build/subs.srt
+build video: phony _build/${deck}.mp4
+build wav: phony _build/tts.result.ss
+build video-audio: phony _build/${deck}-audio.mp4
+
+# ---- クリーンターゲット ----
+rule do_clean_png
+  command = find _build/orig-png -type f -exec rm {} + 2>/dev/null; rmdir _build/orig-png 2>/dev/null; find _build/new-png -type f -exec rm {} + 2>/dev/null; rmdir _build/new-png 2>/dev/null; find _build/final-png -type f -exec rm {} + 2>/dev/null; rmdir _build/final-png 2>/dev/null; true
+
+rule do_clean_wav
+  command = find _build/orig-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/orig-wav 2>/dev/null; find _build/final-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/final-wav 2>/dev/null; find _build/backup-wav -type f -exec rm {} + 2>/dev/null; rmdir _build/backup-wav 2>/dev/null; true
+
+build clean-png: do_clean_png
+build clean-wav: do_clean_wav
