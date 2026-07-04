@@ -40,6 +40,10 @@ if [ -z "$NAME" ]; then
     echo "使い方: sh markdown-cast/bin/init-podman.sh <NAME>"
     exit 1
 fi
+if [ -e "$NAME" ]; then
+    echo "エラー: $NAME は既に存在します (already exists)"
+    exit 1
+fi
 
 # ---- パス設定 ----
 DESTDIR="$NAME"
