@@ -6,8 +6,8 @@ Marp から字幕・音声つき動画を作る 8 ステップの全工程実装
 ninja によるビルドも整備済み（`share/rules.ninja` を各 deck の `build.ninja` から include し、
 `ninja video-audio` で最終成果物まで一発で作れる）。  
 README / tutorial.md / install.md も公開向けに整備済み。  
-Podman 対応も完了（`init-podman.sh` の別セット方式。ホストは podman と ninja だけでよい。
-ホスト実行 deck との混在も検証済み。podman.md 参照）。  
+Podman 対応も完了し、標準の `init.sh` が podman 版（ホストは podman と ninja だけでよい）。
+ホスト実行版は `init-host.sh`。ホスト実行 deck との混在も検証済み（podman.md 参照）。  
 lit テスト 38 件すべて PASS。
 
 ## テスト実行
@@ -49,7 +49,7 @@ TODO.md           懸念点・積み残し課題
 
 優先順は TODO.md を参照。主な積み残し:
 
-1. **イメージの ghcr.io への push** — push はユーザーが実施予定。その後 init-podman.sh を pull 対応に
+1. **イメージの ghcr.io への push** — push はユーザーが実施予定。その後 init.sh を pull 対応に
 2. **gstreamer のフォント依存チェック** — `lit.cfg.py` に `fonts-noto-cjk` の feature 登録を追加
 3. **サンプル動画の公開** — examples/ の完成 mp4 を GitHub Releases 等に置く
 

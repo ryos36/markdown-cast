@@ -5,7 +5,7 @@
 `markdown-cast:v1` を GitHub Container Registry（`ghcr.io/<ユーザー名>/markdown-cast:v1`）に
 push し、利用者が Containerfile からビルドせずに `podman pull` で使えるようにする。
 push はユーザー（Ryos）が行う予定。
-init-podman.sh の「ローカルになければ pull、それもなければ build」への変更は push 後に行う。
+init.sh（podman 版）の「ローカルになければ pull、それもなければ build」への変更は push 後に行う。
 
 ---
 

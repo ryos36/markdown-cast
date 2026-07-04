@@ -1,4 +1,4 @@
-# markdown-cast  Ver 1.00
+# markdown-cast  Ver 1.10
 
 Marp のスライドから、字幕・音声つき動画を作るツールです。
 
@@ -16,6 +16,19 @@ Marp のスライドから、字幕・音声つき動画を作るツールです
 - **音声つき動画** — Azure TTS を使います
 
 まず字幕つき動画で内容を確認し、準備ができたら音声つき動画を作る流れが基本です。
+
+---
+
+## 必要なもの
+
+ビルドは **podman** コンテナの中で実行されます。
+ホストにインストールするのは `podman` と `ninja` の 2 つだけです。
+変換ツール群（ros / mecab / marp / gstreamer / sox / ffmpeg）のインストールは不要です。
+
+インストール方法は末尾の「[インストール](#インストール)」を参照してください。
+
+podman を使わず、ツールをホストに直接インストールする構成もあります
+（[init-host.md](init-host.md) 参照）。
 
 ---
 
@@ -41,6 +54,7 @@ sh markdown-cast/bin/init.sh my-first-slide
 ```
 
 引数にディレクトリ名を渡します。このディレクトリ名が出力ファイル名になります。
+初回はコンテナイメージのビルドが走ります（数分かかります）。
 
 ```
 my-first-slide  →  _build/my-first-slide.mp4
@@ -116,10 +130,39 @@ Azure TTS での音声合成、limit / dry-run を使った効率的な進め方
 
 ---
 
-## 必要な環境
+## インストール
 
-`ros`（Roswell）/ `mecab` / `npx`（Node.js）/ `gst-launch-1.0`（GStreamer）/ `sox` / `ffmpeg`
+必要なのは `podman` と `ninja` の 2 つです。
 
-インストール手順は [install.md](install.md) を参照してください。
+### Ubuntu / Debian
 
-Azure TTS を使う場合は Azure Speech のサブスクリプションキーが別途必要です。
+```sh
+sudo apt install podman ninja-build
+```
+
+### Mac
+
+```sh
+brew install podman ninja
+podman machine init
+podman machine start
+```
+
+Mac では podman が軽量 VM（podman machine）の上でコンテナを動かします。
+Apple Silicon での動作確認は現在進行中です。
+
+### 動画の再生
+
+できた mp4 の再生に `ffplay`（ffmpeg 付属、Linux）を使う例を本文に載せていますが、
+普段お使いの動画プレイヤーで再生できます。
+
+### Azure TTS
+
+音声つき動画を作る場合は Azure Speech のサブスクリプションキーが別途必要です
+（[azure.md](azure.md) 参照）。
+
+### podman を使わない場合
+
+`init.sh` の代わりに `bin/init-host.sh` を使い、変換ツール群をホストにインストールします。
+使い方は [init-host.md](init-host.md)、ツールのインストール手順は [install.md](install.md) を
+参照してください。

@@ -1,6 +1,9 @@
-# 環境のセットアップ
+# 環境のセットアップ（ホスト実行版）
 
-markdown-cast を動かすために必要なツールのインストール手順です。
+ツールをホストに直接インストールして markdown-cast（`init-host.sh`）を動かすための手順です。
+
+podman でビルドする場合（標準の `init.sh`）はこのページの作業は不要です。
+podman と ninja だけインストールしてください（README 参照）。
 
 Ubuntu / Debian 系を前提に書いています。
 
@@ -82,16 +85,16 @@ echo "テスト" | mecab
 
 ## 動作確認
 
-`init.sh` を実行すると環境チェックが走り、不足しているツールを教えてくれます。
+`init-host.sh` を実行すると環境チェックが走り、不足しているツールを教えてくれます。
 
 ```sh
-sh markdown-cast/bin/init.sh --help
+sh markdown-cast/bin/init-host.sh --help
 ```
 
 または実際に足場を作ってみます。
 
 ```sh
-sh markdown-cast/bin/init.sh test-slide
+sh markdown-cast/bin/init-host.sh test-slide
 ```
 
 `[OK]` / `[MISSING]` で各ツールの有無が表示されます。

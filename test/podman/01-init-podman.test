@@ -1,7 +1,7 @@
 # REQUIRES: ninja, podman
 # RUN: rm -rf %T/root && mkdir -p %T/root
 # RUN: ln -sfn %S/../.. %T/root/markdown-cast
-# RUN: cd %T/root && sh markdown-cast/bin/init-podman.sh myslide
+# RUN: cd %T/root && sh markdown-cast/bin/init.sh myslide
 # RUN: cp %S/../integration/fixtures/deck.md %T/root/myslide/deck.md
 # RUN: ninja -C %T/root/myslide -j1 video pdf video-audio
 # RUN: test -f %T/root/myslide/_build/myslide.mp4

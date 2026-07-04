@@ -1,5 +1,9 @@
 #!/bin/sh
-# init.sh — markdown-cast プロジェクトの足場を作る
+# init.sh — markdown-cast プロジェクトの足場を作る（ビルドは podman コンテナ内で走る）
+#
+# ホストに必要なのは podman と ninja だけ。
+# rules-podman.ninja / templates/podman を参照する build.ninja を生成する。
+# ツールをホストに直接インストールして使う場合は init-host.sh を使う。
 #
 # 使い方:
 #   sh markdown-cast/bin/init.sh <NAME>    # NAME/ サブディレクトリに足場を生成する（辞書は share/ に共通化）
@@ -9,7 +13,7 @@ set -e
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 MKC=$(cd "$SCRIPT_DIR/.." && pwd)
 SUBMOD=$(basename "$MKC")
-TMPL="$MKC/templates/default"
+TMPL="$MKC/templates/podman"
 
 # ---- 環境チェック ----
 echo "Checking environment..."
@@ -22,14 +26,15 @@ check_tool() {
         MISSING=1
     fi
 }
-check_tool ros           "https://roswell.github.io/"
-check_tool mecab         "apt install mecab libmecab-dev mecab-ipadic-utf8"
-check_tool npx           "apt install nodejs npm"
-check_tool gst-launch-1.0 "apt install gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly"
-check_tool sox           "apt install sox"
-check_tool ffmpeg        "apt install ffmpeg"
+check_tool podman        "apt install podman"
 check_tool ninja         "apt install ninja-build"
 
+if ! command -v podman > /dev/null 2>&1; then
+    echo ""
+    echo "エラー: podman が必要です。"
+    echo "podman を使わずホストのツールでビルドする場合は init-host.sh を使ってください。"
+    exit 1
+fi
 if [ "$MISSING" -eq 1 ]; then
     echo ""
     echo "  ※ 不足ツールがありますが、足場の生成は続けます。"
@@ -49,12 +54,26 @@ fi
 
 # ---- パス設定 ----
 DESTDIR="$NAME"
-BIN="../$SUBMOD/bin"
+# bin はコンテナ内パス（rule の command でのみ使われる）
+BIN="/markdown-cast/bin"
+# 辞書は ninja の依存関係にも使われるためホスト側の相対パス
 MECAB_DICT="../share/mecab-private.dict.ss"
 PRON_DICT="../share/pronunciation.dict.ss"
-RULES="../$SUBMOD/share/rules.ninja"
+RULES="../$SUBMOD/share/rules-podman.ninja"
 DICT_DIR="share"
 DECK="$NAME"
+# 使用するコンテナイメージ
+IMAGE="localhost/markdown-cast:v1"
+CONTAINERFILE_DIR="$MKC/podman/v1"
+
+# ---- イメージの確認とビルド ----
+if podman image exists "$IMAGE"; then
+    echo "  [OK]      イメージ $IMAGE"
+else
+    echo "  [build]   イメージ $IMAGE をビルドします（初回は数分かかります）"
+    podman build -t "$IMAGE" "$CONTAINERFILE_DIR"
+fi
+echo ""
 
 # ---- 辞書を配置 ----
 mkdir -p "$DICT_DIR"
@@ -82,6 +101,7 @@ else
         -e "s|@PRON_DICT@|$PRON_DICT|g" \
         -e "s|@RULES@|$RULES|g" \
         -e "s|@DECK@|$DECK|g" \
+        -e "s|@IMAGE@|$IMAGE|g" \
         "$TMPL/build.ninja.in" > "$NINJA_DST"
     echo "  [create]  $NINJA_DST"
 fi

@@ -1,18 +1,18 @@
 #!/bin/sh
-# init-podman.sh — markdown-cast プロジェクトの足場を作る（podman 版）
+# init-host.sh — markdown-cast プロジェクトの足場を作る（ホスト実行版）
 #
-# ホスト実行用の init.sh には触れない別セット。
-# rules-podman.ninja / templates/podman を参照する build.ninja を生成する。
+# ros / mecab / marp / gstreamer などをホストに直接インストールして使う構成
+# （install.md 参照）。podman でビルドする場合は init.sh を使う。
 #
 # 使い方:
-#   sh markdown-cast/bin/init-podman.sh <NAME>    # NAME/ サブディレクトリに足場を生成する（辞書は share/ に共通化）
+#   sh markdown-cast/bin/init-host.sh <NAME>    # NAME/ サブディレクトリに足場を生成する（辞書は share/ に共通化）
 
 set -e
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 MKC=$(cd "$SCRIPT_DIR/.." && pwd)
 SUBMOD=$(basename "$MKC")
-TMPL="$MKC/templates/podman"
+TMPL="$MKC/templates/default"
 
 # ---- 環境チェック ----
 echo "Checking environment..."
@@ -25,7 +25,12 @@ check_tool() {
         MISSING=1
     fi
 }
-check_tool podman        "apt install podman"
+check_tool ros           "https://roswell.github.io/"
+check_tool mecab         "apt install mecab libmecab-dev mecab-ipadic-utf8"
+check_tool npx           "apt install nodejs npm"
+check_tool gst-launch-1.0 "apt install gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly"
+check_tool sox           "apt install sox"
+check_tool ffmpeg        "apt install ffmpeg"
 check_tool ninja         "apt install ninja-build"
 
 if [ "$MISSING" -eq 1 ]; then
@@ -37,7 +42,7 @@ echo ""
 # ---- 引数チェック ----
 NAME="$1"
 if [ -z "$NAME" ]; then
-    echo "使い方: sh markdown-cast/bin/init-podman.sh <NAME>"
+    echo "使い方: sh markdown-cast/bin/init-host.sh <NAME>"
     exit 1
 fi
 if [ -e "$NAME" ]; then
@@ -47,30 +52,12 @@ fi
 
 # ---- パス設定 ----
 DESTDIR="$NAME"
-# bin はコンテナ内パス（rule の command でのみ使われる）
-BIN="/markdown-cast/bin"
-# 辞書は ninja の依存関係にも使われるためホスト側の相対パス
+BIN="../$SUBMOD/bin"
 MECAB_DICT="../share/mecab-private.dict.ss"
 PRON_DICT="../share/pronunciation.dict.ss"
-RULES="../$SUBMOD/share/rules-podman.ninja"
+RULES="../$SUBMOD/share/rules.ninja"
 DICT_DIR="share"
 DECK="$NAME"
-# 使用するコンテナイメージ
-IMAGE="localhost/markdown-cast:v1"
-CONTAINERFILE_DIR="$MKC/podman/v1"
-
-# ---- イメージの確認とビルド ----
-if command -v podman > /dev/null 2>&1; then
-    if podman image exists "$IMAGE"; then
-        echo "  [OK]      イメージ $IMAGE"
-    else
-        echo "  [build]   イメージ $IMAGE をビルドします（初回は数分かかります）"
-        podman build -t "$IMAGE" "$CONTAINERFILE_DIR"
-    fi
-else
-    echo "  [skip]    podman がないためイメージの確認をスキップします"
-fi
-echo ""
 
 # ---- 辞書を配置 ----
 mkdir -p "$DICT_DIR"
@@ -98,7 +85,6 @@ else
         -e "s|@PRON_DICT@|$PRON_DICT|g" \
         -e "s|@RULES@|$RULES|g" \
         -e "s|@DECK@|$DECK|g" \
-        -e "s|@IMAGE@|$IMAGE|g" \
         "$TMPL/build.ninja.in" > "$NINJA_DST"
     echo "  [create]  $NINJA_DST"
 fi
